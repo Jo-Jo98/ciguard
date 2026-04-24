@@ -1,0 +1,74 @@
+# ciguard real-world demo pipeline.
+#
+# Push this file to a fresh GitLab project as `.gitlab-ci.yml`. It will:
+#
+#   1. Trigger most of ciguard's 19 rules (it's deliberately bad).
+#   2. Include GitLab's built-in security scanners — the artifacts they produce
+#      (`gl-sast-report.json`, `gl-secret-detection-report.json`,
+#      `gl-dependency-scanning-report.json`) are what `src/scanners/gitlab_native.py`
+#      consumes. Downloading those after a pipeline run gives us real fixtures.
+#   3. Run quickly (no real builds, just synthetic shells) and use no real secrets
+#      — every "secret" is obviously fake (`AKIA...EXAMPLE`).
+#
+# How to use:
+#   1. New GitLab project (private; empty)
+#   2. Copy this file as `.gitlab-ci.yml` at the repo root
+#   3. Push to `main` — pipeline runs automatically
+#   4. From the pipeline view, download artifacts from the security jobs:
+#        - sast / Security/SAST.gitlab-ci.yml
+#        - secret_detection / Security/Secret-Detection.gitlab-ci.yml
+#        - gemnasium-dependency_scanning / Security/Dependency-Scanning.gitlab-ci.yml
+#   5. Send the `gl-*-report.json` files back; we'll feed them to ciguard:
+#        python src/main.py scan --input <dir-with-gl-reports>/
+
+include:
+  - template: Security/SAST.gitlab-ci.yml
+  - template: Security/Secret-Detection.gitlab-ci.yml
+  - template: Security/Dependency-Scanning.gitlab-ci.yml
+  # NOTE: a `remote:` include of a non-existent URL would trigger PIPE-002 in
+  # ciguard's local scan, but GitLab fetches and validates remote includes
+  # at YAML-compile time and rejects the pipeline if the URL 404s. PIPE-002
+  # is exercised separately by the local fixtures and by the public corpus.
+
+image: node:latest   # PIPE-001: unpinned image
+
+variables:
+  NODE_ENV: "production"
+  DB_PASSWORD: "hunter2hunter2_demo"                           # IAM-001 + IAM-003
+  AWS_ACCESS_KEY_ID: "<EXAMPLE-NOT-A-REAL-AWS-ACCESS-KEY>"                    # IAM-001 (well-known fake)
+  AWS_SECRET_ACCESS_KEY: "<EXAMPLE-NOT-A-REAL-AWS-SECRET-KEY-PLACEHOLDER>"  # IAM-001
+  API_TOKEN: "<EXAMPLE-NOT-A-REAL-GITHUB-PAT>"          # IAM-001 (fake GitHub PAT shape)
+  DEPLOY_SECRET_TOKEN: "demo-only-not-a-real-secret"           # IAM-001 + IAM-003
+
+stages:
+  - build
+  - test
+  - deploy
+
+build_app:
+  stage: build
+  script:
+    - curl -fsSL https://example.com/install.sh | bash         # PIPE-003 + SC-001
+    - eval "$(some_dynamic_command)"                            # PIPE-003
+    - npm install
+  artifacts:
+    paths:
+      - "**/*"                                                  # ART-002 (overly broad)
+    # ART-001: no expire_in
+
+integration-test:
+  stage: test
+  image: docker:latest                                          # PIPE-001
+  services:
+    - docker:dind                                               # RUN-002 (privileged)
+  script:
+    - docker info
+    - npm test
+
+# Production deploy with no environment block, no manual gate, no protection.
+deploy_prod:
+  stage: deploy
+  script:
+    - echo "deploying to prod with $AWS_ACCESS_KEY_ID"
+    - ./deploy.sh production                                    # DEP-001 + DEP-003
+  # No environment: block, no when: manual, no rules → fires PIPE-004 + DEP-001 + DEP-003

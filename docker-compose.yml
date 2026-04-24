@@ -1,0 +1,40 @@
+services:
+  # ── Web UI + API (default) ─────────────────────────────────────────────
+  web:
+    build: .
+    image: ciguard:latest
+    ports:
+      - "8080:8080"
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY:    ${OPENAI_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── CLI scan mode ─────────────────────────────────────────────────────
+  # Examples:
+  #   docker compose run --rm cli scan --input /pipeline/bad_pipeline.yml --output /reports/report.html
+  #   docker compose run --rm cli scan --input /pipeline/bad_pipeline.yml --output /reports/report.pdf --format pdf
+  #   docker compose run --rm cli scan --input /pipeline/bad_pipeline.yml --policies /policies/
+  cli:
+    build: .
+    image: ciguard:latest
+    entrypoint: ["ciguard"]
+    volumes:
+      - ./tests/fixtures:/pipeline:ro
+      - ./reports:/reports
+      - ./policies:/policies:ro
+    profiles: ["cli"]
+
+  # ── Test runner ───────────────────────────────────────────────────────
+  test:
+    build: .
+    image: ciguard:latest
+    entrypoint: ["python", "-m", "pytest"]
+    command: ["tests/", "-v", "--tb=short"]
+    volumes:
+      - .:/app
+    profiles: ["test"]

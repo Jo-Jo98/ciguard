@@ -1,0 +1,177 @@
+# good_pipeline.yml
+# A well-secured pipeline. ciguard should find zero (or near-zero) findings.
+
+image: node:20.11.0-alpine3.19@sha256:a9de8c4b2abf79e1f2e35f4c79ed67b11c9e8f9a3e5b67faba123456789abcd
+
+variables:
+  NODE_ENV: "production"
+  REGISTRY: "registry.example.com"
+  IMAGE_NAME: "myapp"
+
+include:
+  - local: ".gitlab/security-templates.yml"
+  - project: "platform/shared-ci"
+    ref: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"  # pinned to commit SHA
+    file: "/templates/compliance.yml"
+
+stages:
+  - lint
+  - test
+  - security-scan
+  - build
+  - deploy-staging
+  - approve
+  - deploy-production
+
+default:
+  tags:
+    - dedicated-k8s-runner
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+  interruptible: true
+
+# ----------------------------------
+# LINT
+# ----------------------------------
+lint:
+  stage: lint
+  script:
+    - npm ci --prefer-offline
+    - npm run lint
+    - npm run type-check
+
+# ----------------------------------
+# TEST
+# ----------------------------------
+unit-tests:
+  stage: test
+  script:
+    - npm ci --prefer-offline
+    - npm test -- --coverage --ci
+  coverage: '/Lines\s*:\s*(\d+\.?\d*)%/'
+  artifacts:
+    paths:
+      - coverage/lcov-report/
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+      junit: junit-results.xml
+    expire_in: 2 weeks
+
+# ----------------------------------
+# SECURITY SCANNING
+# ----------------------------------
+sast:
+  stage: security-scan
+  image: registry.gitlab.com/security-products/sast:4.1.0@sha256:b2e1f9c0a8d34e7f1b2c5a8d34e7f1b2c5a8d34e7f1b2c5a8d34e7f1b2c5a8d3
+  script:
+    - /analyzer run
+  artifacts:
+    reports:
+      sast: gl-sast-report.json
+    expire_in: 1 week
+  allow_failure: false
+
+dependency-scan:
+  stage: security-scan
+  image: aquasec/trivy:0.49.1@sha256:c1a2b3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1a2b3d4e5f6a7b8c9d0e1f2
+  script:
+    - trivy fs --security-checks vuln --exit-code 1 --severity HIGH,CRITICAL .
+  artifacts:
+    reports:
+      dependency_scanning: trivy-report.json
+    expire_in: 1 week
+
+secret-scan:
+  stage: security-scan
+  image: trufflesecurity/trufflehog:3.68.0@sha256:d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6
+  script:
+    - trufflehog git file://. --only-verified
+
+# ----------------------------------
+# BUILD
+# ----------------------------------
+build-image:
+  stage: build
+  image: gcr.io/kaniko-project/executor:v1.20.0@sha256:e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4
+  script:
+    - /kaniko/executor
+        --context "$CI_PROJECT_DIR"
+        --dockerfile "$CI_PROJECT_DIR/Dockerfile"
+        --destination "$REGISTRY/$IMAGE_NAME:$CI_COMMIT_SHA"
+        --destination "$REGISTRY/$IMAGE_NAME:$CI_COMMIT_REF_SLUG"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_TAG'
+
+sign-image:
+  stage: build
+  image: bitnami/cosign:2.2.3@sha256:f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8
+  script:
+    - cosign sign --yes "$REGISTRY/$IMAGE_NAME:$CI_COMMIT_SHA"
+    - cosign attest --yes --predicate sbom.json "$REGISTRY/$IMAGE_NAME:$CI_COMMIT_SHA"
+  needs:
+    - build-image
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_TAG'
+
+# ----------------------------------
+# DEPLOY STAGING
+# ----------------------------------
+deploy-staging:
+  stage: deploy-staging
+  tags:
+    - dedicated-deploy
+  image: bitnami/kubectl:1.29.2@sha256:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1a2b3d4e5f6a7b8c9d0e1f2
+  script:
+    - kubectl set image deployment/myapp app="$REGISTRY/$IMAGE_NAME:$CI_COMMIT_SHA" -n staging
+    - kubectl rollout status deployment/myapp -n staging --timeout=5m
+  environment:
+    name: staging
+    url: https://staging.example.com
+    deployment_tier: staging
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ----------------------------------
+# APPROVE (manual gate)
+# ----------------------------------
+approve-production:
+  stage: approve
+  tags:
+    - dedicated-deploy
+  image: alpine:3.19.1@sha256:c5b1261d6d3e43071626931fc004f70149baeba2c8ec672bd4f27761f8e1ad6b
+  script:
+    - echo "Production deployment approved by $GITLAB_USER_LOGIN at $(date -u)"
+  when: manual
+  allow_failure: false
+  environment:
+    name: production
+    action: prepare
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
+
+# ----------------------------------
+# DEPLOY PRODUCTION
+# ----------------------------------
+deploy-production:
+  stage: deploy-production
+  tags:
+    - dedicated-deploy
+  image: bitnami/kubectl:1.29.2@sha256:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1a2b3d4e5f6a7b8c9d0e1f2
+  script:
+    - kubectl set image deployment/myapp app="$REGISTRY/$IMAGE_NAME:$CI_COMMIT_SHA" -n production
+    - kubectl rollout status deployment/myapp -n production --timeout=10m
+  environment:
+    name: production
+    url: https://app.example.com
+    deployment_tier: production
+  needs:
+    - approve-production
+  when: on_success
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
+  resource_group: production-deploy

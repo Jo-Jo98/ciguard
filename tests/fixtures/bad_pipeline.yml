@@ -1,0 +1,77 @@
+# bad_pipeline.yml
+# Every security anti-pattern in one file.
+# ciguard should find ~15+ findings here.
+
+image: node:latest   # PIPE-001: unpinned image
+
+variables:
+  NODE_ENV: production
+  DB_PASSWORD: "s3cr3t_p4ssw0rd!"          # IAM-001: hardcoded password
+  AWS_ACCESS_KEY_ID: "<EXAMPLE-NOT-A-REAL-AWS-ACCESS-KEY>" # IAM-001: hardcoded AWS key
+  AWS_SECRET_ACCESS_KEY: "<EXAMPLE-NOT-A-REAL-AWS-SECRET-KEY-PLACEHOLDER>"  # IAM-001
+  API_TOKEN: "<EXAMPLE-NOT-A-REAL-GITHUB-PAT>"  # IAM-001: GitHub PAT
+  DEPLOY_SECRET: "my-super-secret-deploy-key"   # IAM-001 + IAM-003
+
+include:
+  - remote: "https://raw.githubusercontent.com/acme/shared-ci/main/.gitlab-ci-common.yml"  # PIPE-002 + SC-002
+
+stages:
+  - build
+  - test
+  - deploy
+
+build:
+  stage: build
+  image: docker:latest  # PIPE-001: another unpinned image
+  services:
+    - docker:dind   # RUN-002: privileged dind
+  tags:
+    - shared        # RUN-003: shared runner
+  script:
+    - curl https://get.sometools.io/install.sh | bash  # PIPE-003 + SC-001: curl-pipe-bash
+    - npm install
+    - docker build -t myapp:latest .
+    - docker push registry.example.com/myapp:latest
+  artifacts:
+    paths:
+      - "**/*"   # ART-002: wildcard everything
+      - .        # ART-002: entire workspace
+    # ART-001: no expire_in
+
+test:
+  stage: test
+  tags:
+    - shared    # RUN-003
+  script:
+    - npm test
+    - eval $EXTRA_TEST_ARGS  # PIPE-003: eval with variable
+  artifacts:
+    paths:
+      - coverage/
+    # ART-001: no expire_in
+
+integration-test:
+  stage: test
+  image: python  # PIPE-001: no tag
+  script:
+    - pip install -r requirements.txt --index-url https://my-sketchy-pypi.internal/simple/  # SC-001
+    - python -m pytest tests/integration/
+  artifacts:
+    paths:
+      - test-results/
+    # ART-001: no expiry
+
+deploy_prod:
+  stage: deploy
+  image: alpine:latest  # PIPE-001: :latest tag
+  variables:
+    KUBECONFIG_CONTENT: "base64_encoded_kubeconfig_here"
+  script:
+    - echo $KUBECONFIG_CONTENT | base64 -d > kubeconfig
+    - kubectl --kubeconfig=kubeconfig apply -f k8s/production/
+    - curl -H "Authorization: Bearer $CI_JOB_TOKEN" https://external-api.com/deploy  # IAM-002
+  environment:
+    name: production
+    url: https://app.example.com
+  # DEP-001 + DEP-003: no when: manual, no approval gate
+  # PIPE-004 has environment but no protection rules

@@ -1,0 +1,1076 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ciguard — {{ report.pipeline_name }}</title>
+<style>
+  /* ============================
+     RESET & BASE
+  ============================== */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:         #0d1117;
+    --bg-card:    #161b22;
+    --bg-card2:   #1c2128;
+    --border:     #30363d;
+    --border-light: #21262d;
+    --text:       #e6edf3;
+    --text-muted: #8b949e;
+    --text-dim:   #6e7681;
+
+    --critical:   #f85149;
+    --critical-bg:#3d1212;
+    --high:       #d29922;
+    --high-bg:    #3d2b00;
+    --medium:     #e3b341;
+    --medium-bg:  #2d2000;
+    --low:        #3fb950;
+    --low-bg:     #0c2d1a;
+    --info:       #58a6ff;
+    --info-bg:    #0d2147;
+
+    --grade-a: #3fb950;
+    --grade-b: #58a6ff;
+    --grade-c: #d29922;
+    --grade-d: #f0883e;
+    --grade-f: #da3633;
+
+    --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --radius: 8px;
+    --shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.6;
+    padding-bottom: 60px;
+  }
+
+  a { color: var(--info); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    background: var(--bg-card2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--border-light);
+  }
+
+  pre {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    background: var(--bg-card2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  /* ============================
+     LAYOUT
+  ============================== */
+  .container {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  .section { margin: 32px 0; }
+  .section-title {
+    font-size: 18px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 10px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .section-title .icon { font-size: 20px; }
+
+  /* ============================
+     HEADER
+  ============================== */
+  header {
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+    padding: 20px 0;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: var(--shadow);
+  }
+
+  .header-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo-icon {
+    width: 40px;
+    height: 40px;
+    background: linear-gradient(135deg, #1f6feb, #58a6ff);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+  }
+
+  .logo-text h1 {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+  }
+
+  .logo-text .subtitle {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .header-meta {
+    text-align: right;
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.8;
+  }
+
+  /* ============================
+     NAV
+  ============================== */
+  nav {
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+    padding: 0;
+  }
+
+  .nav-inner {
+    display: flex;
+    gap: 0;
+    overflow-x: auto;
+  }
+
+  .nav-item {
+    padding: 12px 20px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s;
+  }
+
+  .nav-item:hover { color: var(--text); }
+  .nav-item.active {
+    color: var(--info);
+    border-bottom-color: var(--info);
+  }
+
+  /* ============================
+     HERO / RISK SCORE
+  ============================== */
+  .hero {
+    background: linear-gradient(180deg, var(--bg-card) 0%, var(--bg) 100%);
+    padding: 40px 0 32px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .hero-grid {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 40px;
+    align-items: start;
+  }
+
+  /* Risk gauge */
+  .gauge-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .gauge-container {
+    position: relative;
+    width: 220px;
+    height: 120px;
+    overflow: hidden;
+  }
+
+  .gauge-bg {
+    width: 220px;
+    height: 220px;
+    border-radius: 50%;
+    border: 20px solid var(--bg-card2);
+    position: absolute;
+    top: 0;
+    left: 0;
+    clip-path: inset(0 0 50% 0);
+  }
+
+  .gauge-fill {
+    width: 220px;
+    height: 220px;
+    border-radius: 50%;
+    border: 20px solid transparent;
+    position: absolute;
+    top: 0;
+    left: 0;
+    clip-path: inset(0 0 50% 0);
+    transform-origin: center 50%;
+    --score: 0deg;
+    background: conic-gradient(var(--gauge-color, #3fb950) var(--score), transparent 0deg);
+    border-radius: 50%;
+    /* We use a conic gradient trick for the arc */
+  }
+
+  .gauge-score {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+  }
+
+  .gauge-number {
+    font-size: 42px;
+    font-weight: 800;
+    line-height: 1;
+  }
+
+  .gauge-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .grade-badge {
+    width: 56px;
+    height: 56px;
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    font-weight: 900;
+    border: 2px solid;
+  }
+
+  .grade-a { background: rgba(63,185,80,0.1); border-color: var(--grade-a); color: var(--grade-a); }
+  .grade-b { background: rgba(88,166,255,0.1); border-color: var(--grade-b); color: var(--grade-b); }
+  .grade-c { background: rgba(210,153,34,0.1); border-color: var(--grade-c); color: var(--grade-c); }
+  .grade-d { background: rgba(240,136,62,0.1); border-color: var(--grade-d); color: var(--grade-d); }
+  .grade-f { background: rgba(218,54,51,0.1); border-color: var(--grade-f); color: var(--grade-f); }
+
+  /* Summary stats */
+  .stat-cards {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .stat-card {
+    background: var(--bg-card2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    text-align: center;
+  }
+
+  .stat-card .count {
+    font-size: 32px;
+    font-weight: 800;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  .stat-card .label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .stat-card.critical .count { color: var(--critical); }
+  .stat-card.high     .count { color: var(--high); }
+  .stat-card.medium   .count { color: var(--medium); }
+  .stat-card.low      .count { color: var(--low); }
+  .stat-card.info     .count { color: var(--info); }
+
+  .category-bars {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  .cat-bar {
+    background: var(--bg-card2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+  }
+
+  .cat-bar-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-size: 12px;
+  }
+
+  .cat-bar-name { color: var(--text-muted); }
+  .cat-bar-score { font-weight: 700; }
+
+  .bar-track {
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.8s ease;
+  }
+
+  /* ============================
+     PIPELINE VISUALISATION
+  ============================== */
+  .pipeline-flow {
+    display: flex;
+    gap: 0;
+    overflow-x: auto;
+    padding: 16px 0;
+    align-items: flex-start;
+  }
+
+  .stage-block {
+    flex: 0 0 auto;
+    min-width: 140px;
+    max-width: 180px;
+  }
+
+  .stage-header {
+    background: var(--bg-card2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius) var(--radius) 0 0;
+    padding: 8px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-muted);
+    text-align: center;
+  }
+
+  .stage-jobs {
+    border: 1px solid var(--border);
+    border-top: none;
+    border-radius: 0 0 var(--radius) var(--radius);
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: var(--bg-card);
+  }
+
+  .job-chip {
+    padding: 6px 10px;
+    border-radius: 5px;
+    font-size: 11px;
+    background: var(--bg-card2);
+    border: 1px solid var(--border-light);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .job-chip.has-critical { border-color: var(--critical); background: var(--critical-bg); }
+  .job-chip.has-high     { border-color: var(--high); background: var(--high-bg); }
+  .job-chip.has-medium   { border-color: var(--medium); background: var(--medium-bg); }
+  .job-chip.has-low      { border-color: var(--low); background: var(--low-bg); }
+
+  .job-manual { font-size: 9px; background: #2d333b; padding: 2px 5px; border-radius: 3px; }
+
+  .stage-arrow {
+    flex: 0 0 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+    font-size: 18px;
+    padding-top: 40px;
+  }
+
+  /* ============================
+     FINDINGS TABLE
+  ============================== */
+  .filter-bar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+
+  .filter-btn {
+    padding: 5px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--bg-card2);
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .filter-btn:hover { border-color: var(--info); color: var(--text); }
+  .filter-btn.active { border-color: var(--info); background: rgba(88,166,255,0.1); color: var(--info); }
+
+  .findings-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  .findings-table th {
+    background: var(--bg-card2);
+    border: 1px solid var(--border);
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+
+  .findings-table th:hover { background: var(--bg-card); color: var(--text); }
+  .findings-table th.sorted { color: var(--info); }
+
+  .findings-table td {
+    border: 1px solid var(--border-light);
+    padding: 10px 14px;
+    vertical-align: top;
+  }
+
+  .findings-table tr { background: var(--bg-card); }
+  .findings-table tr:nth-child(even) { background: var(--bg); }
+  .findings-table tr:hover { background: var(--bg-card2); }
+
+  .findings-table tr.hidden-row { display: none; }
+
+  .sev-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .sev-critical { background: var(--critical-bg); color: var(--critical); border: 1px solid var(--critical); }
+  .sev-high     { background: var(--high-bg);     color: var(--high);     border: 1px solid var(--high); }
+  .sev-medium   { background: var(--medium-bg);   color: var(--medium);   border: 1px solid var(--medium); }
+  .sev-low      { background: var(--low-bg);      color: var(--low);      border: 1px solid var(--low); }
+  .sev-info     { background: var(--info-bg);     color: var(--info);     border: 1px solid var(--info); }
+
+  .finding-expand {
+    cursor: pointer;
+    color: var(--info);
+    font-size: 11px;
+    margin-top: 4px;
+    display: inline-block;
+  }
+
+  .finding-detail {
+    display: none;
+    margin-top: 10px;
+    padding: 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 1.7;
+  }
+
+  .finding-detail.open { display: block; }
+  .finding-detail h4 { color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .finding-detail p { margin-bottom: 10px; }
+
+  .rule-id {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    background: var(--bg-card2);
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid var(--border-light);
+  }
+
+  .location-tag {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  /* ============================
+     COMPLIANCE TABLE
+  ============================== */
+  .compliance-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  .compliance-table th {
+    background: var(--bg-card2);
+    border: 1px solid var(--border);
+    padding: 9px 14px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    letter-spacing: 0.5px;
+  }
+
+  .compliance-table td {
+    border: 1px solid var(--border-light);
+    padding: 9px 14px;
+    vertical-align: middle;
+  }
+
+  .compliance-table tr { background: var(--bg-card); }
+  .compliance-table tr:nth-child(even) { background: var(--bg); }
+
+  .framework-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .fw-iso { background: rgba(88,166,255,0.1); color: #58a6ff; border: 1px solid #1f6feb; }
+  .fw-soc { background: rgba(210,153,34,0.1); color: #d29922; border: 1px solid #9e7000; }
+  .fw-nist { background: rgba(63,185,80,0.1); color: #3fb950; border: 1px solid #2da042; }
+
+  /* ============================
+     REMEDIATION ROADMAP
+  ============================== */
+  .roadmap-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .roadmap-item {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    display: grid;
+    grid-template-columns: 100px 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+
+  .roadmap-item:hover { border-color: var(--border-light); background: var(--bg-card2); }
+
+  .roadmap-severity {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .roadmap-rule {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    text-align: center;
+  }
+
+  .roadmap-content h3 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .roadmap-content .cat {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+
+  .roadmap-content pre {
+    font-size: 12px;
+    max-height: 120px;
+    overflow-y: auto;
+  }
+
+  /* ============================
+     FOOTER
+  ============================== */
+  footer {
+    margin-top: 48px;
+    padding: 24px 0;
+    border-top: 1px solid var(--border);
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  /* ============================
+     SCROLLBAR
+  ============================== */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+  /* ============================
+     RESPONSIVE
+  ============================== */
+  @media (max-width: 900px) {
+    .hero-grid { grid-template-columns: 1fr; }
+    .stat-cards { grid-template-columns: repeat(3, 1fr); }
+    .category-bars { grid-template-columns: 1fr; }
+    .roadmap-item { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ======================================
+     HEADER
+======================================= -->
+<header>
+  <div class="container header-inner">
+    <div class="logo">
+      <div class="logo-icon">&#128737;</div>
+      <div class="logo-text">
+        <h1>ciguard</h1>
+        <div class="subtitle">CI/CD Pipeline Security Auditor</div>
+      </div>
+    </div>
+    <div class="header-meta">
+      <div><strong>Target:</strong> {{ report.pipeline_name }}</div>
+      <div><strong>Scanned:</strong> {{ report.scan_timestamp[:19].replace('T', ' ') }} UTC</div>
+      <div><strong>Jobs:</strong> {{ report.pipeline.jobs | length }} &bull; <strong>Stages:</strong> {{ report.pipeline.stages | length }}</div>
+    </div>
+  </div>
+</header>
+
+<!-- NAV -->
+<nav>
+  <div class="container nav-inner">
+    <div class="nav-item active" onclick="scrollToSection('summary')">Executive Summary</div>
+    <div class="nav-item" onclick="scrollToSection('pipeline')">Pipeline Flow</div>
+    <div class="nav-item" onclick="scrollToSection('findings')">Findings ({{ report.summary.total }})</div>
+    <div class="nav-item" onclick="scrollToSection('compliance')">Compliance</div>
+    <div class="nav-item" onclick="scrollToSection('remediation')">Remediation Roadmap</div>
+  </div>
+</nav>
+
+<!-- ======================================
+     HERO / EXECUTIVE SUMMARY
+======================================= -->
+<div class="hero" id="summary">
+  <div class="container">
+    <div class="hero-grid">
+
+      <!-- Gauge + Grade -->
+      <div class="gauge-wrap">
+        {% set score = report.risk_score.overall %}
+        {% set gc = score | score_colour %}
+        <div style="position:relative; width:220px; height:130px;">
+          <!-- SVG Gauge -->
+          <svg width="220" height="130" viewBox="0 0 220 120">
+            <!-- Background arc -->
+            <path d="M 20 110 A 90 90 0 0 1 200 110" fill="none" stroke="#21262d" stroke-width="18" stroke-linecap="round"/>
+            <!-- Score arc — length = 180deg arc = 283px circumference -->
+            {% set arc_len = (score / 100 * 283) | round(1) %}
+            <path d="M 20 110 A 90 90 0 0 1 200 110" fill="none" stroke="{{ gc }}" stroke-width="18" stroke-linecap="round"
+                  stroke-dasharray="{{ arc_len }} 283"
+                  style="filter: drop-shadow(0 0 6px {{ gc }})"/>
+            <!-- Score text -->
+            <text x="110" y="90" text-anchor="middle" fill="{{ gc }}" font-size="40" font-weight="800" font-family="system-ui">{{ score }}</text>
+            <text x="110" y="110" text-anchor="middle" fill="#8b949e" font-size="11" font-family="system-ui">RISK SCORE</text>
+          </svg>
+        </div>
+        <div class="grade-badge {{ report.risk_score.grade | grade_class }}">{{ report.risk_score.grade }}</div>
+        <div style="font-size:11px; color:var(--text-muted); text-align:center; margin-top:4px;">
+          {% if report.risk_score.grade == 'A' %}Well-secured pipeline
+          {% elif report.risk_score.grade == 'B' %}Good posture, minor issues
+          {% elif report.risk_score.grade == 'C' %}Moderate risk — action recommended
+          {% elif report.risk_score.grade == 'D' %}High risk — immediate action required
+          {% else %}Critical risk — do not deploy
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Stats + Category bars -->
+      <div>
+        <div class="stat-cards">
+          {% for sev in ['Critical', 'High', 'Medium', 'Low', 'Info'] %}
+          <div class="stat-card {{ sev | lower }}">
+            <div class="count">{{ severity_counts.get(sev, 0) }}</div>
+            <div class="label">{{ sev }}</div>
+          </div>
+          {% endfor %}
+        </div>
+
+        <div class="category-bars">
+          {% set cats = [
+            ('Pipeline Integrity', report.risk_score.pipeline_integrity),
+            ('Identity & Access', report.risk_score.identity_access),
+            ('Runner Security', report.risk_score.runner_security),
+            ('Artifact Handling', report.risk_score.artifact_handling),
+            ('Deployment Governance', report.risk_score.deployment_governance),
+            ('Supply Chain', report.risk_score.supply_chain),
+          ] %}
+          {% for name, score in cats %}
+          <div class="cat-bar">
+            <div class="cat-bar-header">
+              <span class="cat-bar-name">{{ name }}</span>
+              <span class="cat-bar-score" style="color:{{ score | score_colour }}">{{ score }}/100</span>
+            </div>
+            <div class="bar-track">
+              <div class="bar-fill" style="width:{{ score }}%; background:{{ score | score_colour }};"></div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="container">
+
+<!-- ======================================
+     PIPELINE FLOW
+======================================= -->
+<div class="section" id="pipeline">
+  <div class="section-title">
+    <span class="icon">&#9881;</span>
+    Pipeline Flow
+  </div>
+
+  {% if pipeline_stages %}
+  <div class="pipeline-flow">
+    {% for stage in pipeline_stages %}
+    <div class="stage-block">
+      <div class="stage-header">{{ stage.name }}</div>
+      <div class="stage-jobs">
+        {% if stage.jobs %}
+          {% for job in stage.jobs %}
+          {% set chip_class = '' %}
+          {% if job.max_severity == 'Critical' %}{% set chip_class = 'has-critical' %}
+          {% elif job.max_severity == 'High' %}{% set chip_class = 'has-high' %}
+          {% elif job.max_severity == 'Medium' %}{% set chip_class = 'has-medium' %}
+          {% elif job.max_severity == 'Low' %}{% set chip_class = 'has-low' %}
+          {% endif %}
+          <div class="job-chip {{ chip_class }}" title="{{ job.name }}{% if job.env_name %} → {{ job.env_name }}{% endif %}">
+            <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ job.name }}</span>
+            {% if job.is_manual %}<span class="job-manual">MANUAL</span>{% endif %}
+            {% if job.findings_count > 0 %}<span style="font-size:9px; font-weight:700;">{{ job.findings_count }}&#9888;</span>{% endif %}
+          </div>
+          {% endfor %}
+        {% else %}
+          <div style="padding:8px; font-size:11px; color:var(--text-dim); text-align:center;">no jobs</div>
+        {% endif %}
+      </div>
+    </div>
+    {% if not loop.last %}
+    <div class="stage-arrow">&#8594;</div>
+    {% endif %}
+    {% endfor %}
+  </div>
+  {% else %}
+  <div style="color:var(--text-muted); font-style:italic;">No stage information available.</div>
+  {% endif %}
+</div>
+
+<!-- ======================================
+     FINDINGS
+======================================= -->
+<div class="section" id="findings">
+  <div class="section-title">
+    <span class="icon">&#128270;</span>
+    Findings
+    <span style="font-size:13px; font-weight:400; color:var(--text-muted);">({{ sorted_findings | length }} total)</span>
+  </div>
+
+  <div class="filter-bar">
+    <button class="filter-btn active" onclick="filterFindings('all', this)">All ({{ sorted_findings | length }})</button>
+    {% for sev in ['Critical', 'High', 'Medium', 'Low', 'Info'] %}
+    {% set count = severity_counts.get(sev, 0) %}
+    {% if count > 0 %}
+    <button class="filter-btn" onclick="filterFindings('{{ sev }}', this)">{{ sev }} ({{ count }})</button>
+    {% endif %}
+    {% endfor %}
+    <input id="finding-search" type="text" placeholder="Search findings..." onkeyup="searchFindings(this.value)"
+           style="margin-left:auto; padding:5px 12px; border-radius:20px; border:1px solid var(--border); background:var(--bg-card2); color:var(--text); font-size:12px; width:200px; outline:none;">
+  </div>
+
+  <table class="findings-table" id="findings-table">
+    <thead>
+      <tr>
+        <th onclick="sortTable(0)" class="sorted">Severity &#8597;</th>
+        <th onclick="sortTable(1)">Rule &#8597;</th>
+        <th onclick="sortTable(2)">Finding &#8597;</th>
+        <th onclick="sortTable(3)">Category &#8597;</th>
+        <th onclick="sortTable(4)">Location &#8597;</th>
+      </tr>
+    </thead>
+    <tbody id="findings-body">
+      {% for finding in sorted_findings %}
+      <tr class="finding-row" data-severity="{{ finding.severity.value }}"
+          data-text="{{ finding.name | lower }} {{ finding.category.value | lower }} {{ finding.location | lower }} {{ finding.rule_id | lower }}">
+        <td>
+          <span class="sev-badge {{ finding.severity | severity_class }}">
+            {{ finding.severity | severity_icon | safe }} {{ finding.severity.value }}
+          </span>
+        </td>
+        <td><span class="rule-id">{{ finding.rule_id }}</span></td>
+        <td>
+          <div style="font-weight:600; margin-bottom:2px;">{{ finding.name }}</div>
+          <span class="finding-expand" onclick="toggleDetail(this)">&#9660; Details</span>
+          <div class="finding-detail">
+            <h4>Description</h4>
+            <p>{{ finding.description }}</p>
+            <h4>Evidence</h4>
+            <pre>{{ finding.evidence }}</pre>
+            <h4>Remediation</h4>
+            <pre>{{ finding.remediation }}</pre>
+            <h4>Compliance</h4>
+            <p style="font-size:11px; color:var(--text-muted);">
+              {% if finding.compliance.iso_27001 %}ISO 27001: {{ finding.compliance.iso_27001 | join(', ') }}&nbsp;&nbsp;{% endif %}
+              {% if finding.compliance.soc2 %}SOC 2: {{ finding.compliance.soc2 | join(', ') }}&nbsp;&nbsp;{% endif %}
+              {% if finding.compliance.nist %}NIST CSF: {{ finding.compliance.nist | join(', ') }}{% endif %}
+            </p>
+          </div>
+        </td>
+        <td style="white-space:nowrap; color:var(--text-muted);">{{ finding.category | category_icon | safe }} {{ finding.category.value }}</td>
+        <td><span class="location-tag">{{ finding.location }}</span></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" style="text-align:center; padding:32px; color:var(--text-muted);">
+        &#10003; No findings — pipeline passed all checks.
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- ======================================
+     COMPLIANCE
+======================================= -->
+<div class="section" id="compliance">
+  <div class="section-title">
+    <span class="icon">&#128203;</span>
+    Compliance Mapping
+  </div>
+
+  {% if compliance_table %}
+  <table class="compliance-table">
+    <thead>
+      <tr>
+        <th>Framework</th>
+        <th>Control</th>
+        <th>Max Severity</th>
+        <th>Findings</th>
+        <th>Finding Names</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in compliance_table %}
+      <tr>
+        <td>
+          {% if row.framework == 'ISO 27001' %}
+            <span class="framework-badge fw-iso">ISO 27001</span>
+          {% elif row.framework == 'SOC 2' %}
+            <span class="framework-badge fw-soc">SOC 2</span>
+          {% else %}
+            <span class="framework-badge fw-nist">NIST CSF</span>
+          {% endif %}
+        </td>
+        <td><code>{{ row.control }}</code></td>
+        <td><span class="sev-badge {{ row.max_severity | severity_class }}">{{ row.max_severity }}</span></td>
+        <td>{{ row.findings_count }}</td>
+        <td style="font-size:12px; color:var(--text-muted);">{{ row.finding_names | join(', ') }}{% if row.findings_count > 3 %}...{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div style="color:var(--text-muted); font-style:italic;">No compliance mappings to display.</div>
+  {% endif %}
+</div>
+
+<!-- ======================================
+     REMEDIATION ROADMAP
+======================================= -->
+<div class="section" id="remediation">
+  <div class="section-title">
+    <span class="icon">&#128736;</span>
+    Remediation Roadmap
+    <span style="font-size:13px; font-weight:400; color:var(--text-muted);">Priority ordered by severity</span>
+  </div>
+
+  <div class="roadmap-list">
+    {% for item in remediation_roadmap %}
+    <div class="roadmap-item">
+      <div class="roadmap-severity">
+        <span class="sev-badge {{ item.severity | severity_class }}">{{ item.severity }}</span>
+        <span class="roadmap-rule">{{ item.rule_id }}</span>
+        <span style="font-size:10px; color:var(--text-dim); text-align:center;">{{ item.category }}</span>
+      </div>
+      <div class="roadmap-content">
+        <h3>{{ item.name }}</h3>
+        <pre>{{ item.remediation }}</pre>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+</div><!-- /container -->
+
+<footer>
+  <div class="container">
+    ciguard — CI/CD Pipeline Security Auditor &bull;
+    Generated {{ report.scan_timestamp[:10] }} &bull;
+    {{ sorted_findings | length }} finding{% if sorted_findings | length != 1 %}s{% endif %} &bull;
+    Risk Score: {{ report.risk_score.overall }}/100 ({{ report.risk_score.grade }})
+  </div>
+</footer>
+
+<script>
+  // ============================
+  // FILTER
+  // ============================
+  function filterFindings(severity, btn) {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+
+    document.querySelectorAll('.finding-row').forEach(row => {
+      if (severity === 'all' || row.dataset.severity === severity) {
+        row.classList.remove('hidden-row');
+      } else {
+        row.classList.add('hidden-row');
+      }
+    });
+  }
+
+  // ============================
+  // SEARCH
+  // ============================
+  function searchFindings(query) {
+    const q = query.toLowerCase().trim();
+    document.querySelectorAll('.finding-row').forEach(row => {
+      if (!q || row.dataset.text.includes(q)) {
+        row.classList.remove('hidden-row');
+      } else {
+        row.classList.add('hidden-row');
+      }
+    });
+    // Reset filter buttons
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector('.filter-btn').classList.add('active');
+  }
+
+  // ============================
+  // SORT
+  // ============================
+  let sortDir = [1, 1, 1, 1, 1];
+  function sortTable(col) {
+    const tbody = document.getElementById('findings-body');
+    const rows = Array.from(tbody.querySelectorAll('.finding-row'));
+
+    const sevOrder = {Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4};
+    sortDir[col] *= -1;
+
+    rows.sort((a, b) => {
+      let va = a.cells[col].textContent.trim();
+      let vb = b.cells[col].textContent.trim();
+      if (col === 0) {
+        va = sevOrder[a.dataset.severity] ?? 99;
+        vb = sevOrder[b.dataset.severity] ?? 99;
+        return sortDir[col] * (va - vb);
+      }
+      return sortDir[col] * va.localeCompare(vb);
+    });
+
+    rows.forEach(r => tbody.appendChild(r));
+
+    document.querySelectorAll('.findings-table th').forEach(th => th.classList.remove('sorted'));
+    document.querySelectorAll('.findings-table th')[col].classList.add('sorted');
+  }
+
+  // ============================
+  // EXPAND DETAIL
+  // ============================
+  function toggleDetail(btn) {
+    const detail = btn.nextElementSibling;
+    const open = detail.classList.toggle('open');
+    btn.textContent = open ? '▲ Collapse' : '▼ Details';
+  }
+
+  // ============================
+  // SCROLL NAV
+  // ============================
+  function scrollToSection(id) {
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    event.target.classList.add('active');
+  }
+
+  // Update nav on scroll
+  window.addEventListener('scroll', () => {
+    const sections = ['summary', 'pipeline', 'findings', 'compliance', 'remediation'];
+    const navItems = document.querySelectorAll('.nav-item');
+    let current = 'summary';
+    sections.forEach(id => {
+      const el = document.getElementById(id);
+      if (el && window.scrollY >= el.offsetTop - 120) current = id;
+    });
+    navItems.forEach((n, i) => {
+      n.classList.toggle('active', sections[i] === current);
+    });
+  });
+</script>
+
+</body>
+</html>

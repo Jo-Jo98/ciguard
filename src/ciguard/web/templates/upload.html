@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ciguard — CI/CD Pipeline Security Auditor</title>
+  <style>
+    :root {
+      --bg:        #0d1117;
+      --surface:   #161b22;
+      --surface2:  #1c2128;
+      --border:    #30363d;
+      --text:      #e6edf3;
+      --muted:     #8b949e;
+      --accent:    #58a6ff;
+      --accent-bg: rgba(88,166,255,.1);
+      --critical:  #f85149;
+      --high:      #e3b341;
+      --low:       #3fb950;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    body { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 24px; }
+
+    .logo { font-size: 2.5rem; margin-bottom: 8px; user-select: none; }
+    h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 6px; }
+    .tagline { color: var(--muted); font-size: 0.95rem; margin-bottom: 32px; text-align: center; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      width: 100%;
+      max-width: 540px;
+      padding: 32px;
+    }
+
+    .drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: 8px;
+      padding: 48px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+    }
+    .drop-zone:hover, .drop-zone.drag-over {
+      border-color: var(--accent);
+      background: var(--accent-bg);
+    }
+    .drop-icon { font-size: 2.8rem; margin-bottom: 12px; }
+    .drop-zone p { color: var(--muted); margin-bottom: 8px; font-size: 0.9rem; }
+    .drop-zone p:first-of-type { color: var(--text); font-weight: 500; font-size: 1rem; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 20px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-family: inherit;
+      transition: border-color .15s, background .15s;
+    }
+    .btn:hover { border-color: var(--accent); background: var(--accent-bg); }
+    .btn-primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #0d1117;
+      font-weight: 600;
+      width: 100%;
+      justify-content: center;
+      padding: 10px;
+      font-size: 0.95rem;
+      margin-top: 16px;
+    }
+    .btn-primary:hover { background: #79b8ff; border-color: #79b8ff; }
+    .btn-primary:disabled { opacity: .45; cursor: default; }
+
+    .file-selected {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      margin-top: 16px;
+      padding: 10px 14px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.88rem;
+    }
+    .file-icon { font-size: 1.2rem; }
+    .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-clear { cursor: pointer; color: var(--muted); font-size: 1.1rem; line-height: 1; }
+    .file-clear:hover { color: var(--critical); }
+
+    .loading {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      padding: 32px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .spinner {
+      width: 32px; height: 32px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .error-box {
+      display: none;
+      margin-top: 14px;
+      padding: 10px 14px;
+      background: rgba(248,81,73,.1);
+      border: 1px solid rgba(248,81,73,.4);
+      border-radius: 6px;
+      color: #f85149;
+      font-size: 0.88rem;
+      line-height: 1.5;
+    }
+
+    .hints {
+      margin-top: 24px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .hint {
+      font-size: 0.78rem;
+      color: var(--muted);
+      display: flex; align-items: center; gap: 5px;
+    }
+    .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .dot-green { background: var(--low); }
+    .dot-orange { background: var(--high); }
+    .dot-red { background: var(--critical); }
+
+    footer { margin-top: 32px; color: var(--muted); font-size: 0.78rem; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="logo">🛡️</div>
+  <h1>ciguard</h1>
+  <p class="tagline">CI/CD Pipeline Security Auditor — GitLab CI</p>
+
+  <div class="card">
+    <div class="drop-zone" id="dropZone">
+      <div class="drop-icon">📂</div>
+      <p>Drag &amp; drop your <code>.gitlab-ci.yml</code> here</p>
+      <p>or</p>
+      <button class="btn" id="browseBtn">Browse Files</button>
+      <input type="file" id="fileInput" accept=".yml,.yaml" style="display:none">
+    </div>
+
+    <div class="file-selected" id="fileSelected">
+      <span class="file-icon">📄</span>
+      <span class="file-name" id="fileName"></span>
+      <span class="file-clear" id="fileClear" title="Remove">✕</span>
+    </div>
+
+    <div class="error-box" id="errorBox"></div>
+
+    <button class="btn btn-primary" id="scanBtn" disabled>Scan Pipeline</button>
+
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      <span>Analysing pipeline security…</span>
+    </div>
+  </div>
+
+  <div class="hints">
+    <span class="hint"><span class="dot dot-green"></span>19 deterministic rules</span>
+    <span class="hint"><span class="dot dot-orange"></span>ISO 27001 · SOC 2 · NIST CSF</span>
+    <span class="hint"><span class="dot dot-red"></span>Zero data retention</span>
+  </div>
+
+  <footer>ciguard v0.3.0 &mdash; <a href="/api/docs">API docs</a></footer>
+
+  <script>
+    const dropZone   = document.getElementById('dropZone');
+    const fileInput  = document.getElementById('fileInput');
+    const browseBtn  = document.getElementById('browseBtn');
+    const fileSelected = document.getElementById('fileSelected');
+    const fileNameEl = document.getElementById('fileName');
+    const fileClear  = document.getElementById('fileClear');
+    const scanBtn    = document.getElementById('scanBtn');
+    const loading    = document.getElementById('loading');
+    const errorBox   = document.getElementById('errorBox');
+
+    let selectedFile = null;
+
+    browseBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => setFile(fileInput.files[0]));
+    fileClear.addEventListener('click', clearFile);
+
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      const f = e.dataTransfer.files[0];
+      if (f) setFile(f);
+    });
+
+    function setFile(file) {
+      if (!file) return;
+      selectedFile = file;
+      fileNameEl.textContent = file.name;
+      fileSelected.style.display = 'flex';
+      scanBtn.disabled = false;
+      hideError();
+    }
+
+    function clearFile() {
+      selectedFile = null;
+      fileInput.value = '';
+      fileSelected.style.display = 'none';
+      scanBtn.disabled = true;
+      hideError();
+    }
+
+    function showError(msg) {
+      errorBox.textContent = msg;
+      errorBox.style.display = 'block';
+    }
+    function hideError() { errorBox.style.display = 'none'; }
+
+    scanBtn.addEventListener('click', async () => {
+      if (!selectedFile) return;
+      hideError();
+      scanBtn.style.display    = 'none';
+      fileSelected.style.display = 'none';
+      loading.style.display    = 'flex';
+
+      const fd = new FormData();
+      fd.append('file', selectedFile);
+
+      try {
+        const res = await fetch('/api/scan', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || `HTTP ${res.status}`);
+        }
+        window.location.href = `/report/${data.scan_id}`;
+      } catch (err) {
+        loading.style.display    = 'none';
+        scanBtn.style.display    = '';
+        fileSelected.style.display = 'flex';
+        showError('Scan failed: ' + err.message);
+      }
+    });
+  </script>
+</body>
+</html>

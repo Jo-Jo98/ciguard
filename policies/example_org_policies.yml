@@ -1,0 +1,50 @@
+# Example custom organisation policies for PipeGuard
+#
+# Place YAML files in this directory and pass the folder path to the CLI:
+#   python src/main.py scan --input pipeline.yml --policies policies/
+#
+# Each file may contain a single policy (bare mapping) or multiple policies
+# under a `policies:` key (list).
+#
+# Built-in policies (POL-001 to POL-007) are always evaluated.
+# These custom policies are added on top.
+
+policies:
+  - id: "ORG-001"
+    name: "No Critical Findings"
+    description: >
+      Our organisation requires zero critical security findings before
+      any code merges to the main branch.
+    severity: critical
+    condition:
+      type: no_severity
+      severity: Critical
+    remediation: "Resolve all Critical findings before merging. See security runbook."
+    tags: [org, critical, gate]
+
+  - id: "ORG-002"
+    name: "Minimum Risk Score 70"
+    description: >
+      All pipelines must achieve a risk score of 70 or above.
+      Pipelines below this threshold require a security review before deployment.
+    severity: high
+    condition:
+      type: min_risk_score
+      min_score: 70.0
+    remediation: "Address findings to bring the overall risk score above 70."
+    tags: [org, score]
+
+  - id: "ORG-003"
+    name: "Identity & Access Score Must Be Healthy"
+    description: >
+      The Identity & Access category must score 80 or above.
+      This covers hardcoded secrets and CI_JOB_TOKEN misuse.
+    severity: high
+    condition:
+      type: min_category_score
+      category: identity_access
+      min_score: 80.0
+    remediation: >
+      Resolve all IAM findings. Move secrets to GitLab CI/CD Variables
+      and restrict CI_JOB_TOKEN scope.
+    tags: [org, iam, secrets]

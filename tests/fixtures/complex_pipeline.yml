@@ -1,0 +1,241 @@
+# complex_pipeline.yml
+# Multi-stage pipeline with includes, matrix jobs, environment promotion,
+# cross-project triggers, and secrets management.
+# Expect: ~8-12 findings (various issues in real-world complex pipelines).
+
+image: alpine:latest  # PIPE-001: unpinned
+
+variables:
+  TF_VERSION: "1.7.0"
+  HELM_VERSION: "3.14.0"
+  ENVIRONMENT_PREFIX: "prod"
+  SLACK_WEBHOOK: "<EXAMPLE-NOT-A-REAL-SLACK-WEBHOOK-URL>"  # IAM-003: sensitive variable
+  DEPLOY_TOKEN: "<EXAMPLE-NOT-A-REAL-GITLAB-DEPLOY-TOKEN>"  # IAM-001: hardcoded deploy token
+
+include:
+  - project: "platform/terraform-modules"
+    ref: "main"         # SC-002: branch ref, not SHA
+    file: "/ci/terraform.yml"
+  - project: "security/compliance-templates"
+    ref: "v2.0.0"       # SC-002: tag ref, not SHA (better but still risky)
+    file: "/sast.yml"
+  - remote: "https://raw.githubusercontent.com/company/shared-jobs/HEAD/.gitlab-ci-shared.yml"  # PIPE-002 + SC-002
+
+stages:
+  - validate
+  - test
+  - scan
+  - build
+  - infrastructure
+  - deploy-eu-west
+  - deploy-us-east
+  - deploy-ap-south
+  - smoke-test
+  - rollback
+
+# ----------------------------------
+# VALIDATE
+# ----------------------------------
+validate-terraform:
+  stage: validate
+  image: hashicorp/terraform:${TF_VERSION}
+  script:
+    - terraform init -backend=false
+    - terraform validate
+    - terraform fmt -check
+
+validate-helm:
+  stage: validate
+  image: alpine/helm:${HELM_VERSION}  # PIPE-001: uses variable, unpinned
+  script:
+    - helm lint charts/myapp/
+    - helm template charts/myapp/ | kubectl --dry-run=client apply -f -
+
+# ----------------------------------
+# TEST (matrix)
+# ----------------------------------
+unit-test:
+  stage: test
+  image: python:${PYTHON_VERSION}   # PIPE-001: variable = unpinned
+  parallel:
+    matrix:
+      - PYTHON_VERSION: ["3.10", "3.11", "3.12"]
+  script:
+    - pip install -r requirements.txt
+    - pytest tests/ -v
+  artifacts:
+    paths:
+      - junit-${PYTHON_VERSION}.xml
+    reports:
+      junit: junit-${PYTHON_VERSION}.xml
+    expire_in: 2 weeks
+
+# ----------------------------------
+# SECURITY SCAN
+# ----------------------------------
+dependency-scan:
+  stage: scan
+  image: aquasec/trivy:latest  # PIPE-001: :latest
+  script:
+    - trivy fs --security-checks vuln --format json --output trivy-report.json .
+  artifacts:
+    paths:
+      - trivy-report.json
+    expire_in: 1 week
+
+container-scan:
+  stage: scan
+  image: aquasec/trivy:latest  # PIPE-001: :latest again
+  script:
+    - trivy image --format json --output container-scan.json $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+  allow_failure: true  # This should not be allow_failure for critical scans
+  artifacts:
+    paths:
+      - container-scan.json
+    expire_in: 1 week
+
+# ----------------------------------
+# BUILD
+# ----------------------------------
+build-and-push:
+  stage: build
+  image: docker:24.0  # PIPE-001: no patch version, no digest
+  services:
+    - docker:24.0-dind  # RUN-002: privileged dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA -t $CI_REGISTRY_IMAGE:latest .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+    - docker push $CI_REGISTRY_IMAGE:latest
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_TAG'
+
+# ----------------------------------
+# INFRASTRUCTURE (Terraform apply)
+# ----------------------------------
+.terraform-base:
+  image: hashicorp/terraform:${TF_VERSION}
+  before_script:
+    - terraform init
+  dependencies: []
+
+terraform-eu-west:
+  extends: .terraform-base
+  stage: infrastructure
+  script:
+    - terraform workspace select eu-west-1
+    - terraform plan -out=tfplan-eu
+    - terraform apply -auto-approve tfplan-eu
+  environment:
+    name: infrastructure/eu-west
+    deployment_tier: production
+  when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+terraform-us-east:
+  extends: .terraform-base
+  stage: infrastructure
+  script:
+    - terraform workspace select us-east-1
+    - terraform plan -out=tfplan-us
+    - terraform apply -auto-approve tfplan-us
+  environment:
+    name: infrastructure/us-east
+    deployment_tier: production
+  when: manual
+
+# ----------------------------------
+# DEPLOY — multi-region
+# ----------------------------------
+.deploy-base:
+  image: bitnami/helm:${HELM_VERSION}
+  before_script:
+    - helm repo update
+  script:
+    - |
+      helm upgrade --install myapp charts/myapp/ \
+        --namespace $NAMESPACE \
+        --set image.tag=$CI_COMMIT_SHA \
+        --set environment=$DEPLOY_ENV \
+        --atomic \
+        --timeout 10m
+
+deploy-eu-west:
+  extends: .deploy-base
+  stage: deploy-eu-west
+  variables:
+    NAMESPACE: "prod-eu"
+    DEPLOY_ENV: "production"
+  environment:
+    name: production/eu-west
+    url: https://eu.app.example.com
+    deployment_tier: production
+  # DEP-001 + DEP-003: no manual gate on production deploy
+  needs:
+    - terraform-eu-west
+    - build-and-push
+
+deploy-us-east:
+  extends: .deploy-base
+  stage: deploy-us-east
+  variables:
+    NAMESPACE: "prod-us"
+    DEPLOY_ENV: "production"
+  environment:
+    name: production/us-east
+    url: https://us.app.example.com
+    deployment_tier: production
+  # DEP-001 + DEP-003: no manual gate
+  needs:
+    - terraform-us-east
+    - build-and-push
+
+deploy-ap-south:
+  extends: .deploy-base
+  stage: deploy-ap-south
+  variables:
+    NAMESPACE: "prod-ap"
+    DEPLOY_ENV: "production"
+  environment:
+    name: production/ap-south
+    url: https://ap.app.example.com
+    deployment_tier: production
+  when: manual  # AP has a gate — inconsistent with EU/US
+  needs:
+    - build-and-push
+
+# ----------------------------------
+# SMOKE TESTS
+# ----------------------------------
+smoke-test-eu:
+  stage: smoke-test
+  image: curlimages/curl:latest  # PIPE-001: latest
+  script:
+    - curl -f https://eu.app.example.com/health
+    - curl -f https://eu.app.example.com/ready
+  needs:
+    - deploy-eu-west
+
+smoke-test-us:
+  stage: smoke-test
+  image: curlimages/curl:latest  # PIPE-001: latest
+  script:
+    - curl -f https://us.app.example.com/health
+  needs:
+    - deploy-us-east
+
+# ----------------------------------
+# ROLLBACK (cross-project trigger)
+# ----------------------------------
+trigger-rollback:
+  stage: rollback
+  trigger:
+    project: platform/rollback-automation
+    branch: main
+    strategy: depend
+  when: manual
+  variables:
+    ROLLBACK_VERSION: $CI_PREVIOUS_COMMIT
+    ROLLBACK_REGION: "all"
