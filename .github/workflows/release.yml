@@ -39,12 +39,14 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Set image tag
+      - name: Compute image refs (GHCR requires lowercase)
         id: tag
         run: |
+          REPO_LC="${GITHUB_REPOSITORY,,}"
+          echo "repo=$REPO_LC" >> $GITHUB_OUTPUT
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
             echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-            echo "extra=,ghcr.io/${{ github.repository }}:latest" >> $GITHUB_OUTPUT
+            echo "extra=,ghcr.io/$REPO_LC:latest" >> $GITHUB_OUTPUT
           else
             echo "tag=manual-$(date +%Y%m%d%H%M%S)" >> $GITHUB_OUTPUT
             echo "extra=" >> $GITHUB_OUTPUT
@@ -54,4 +56,4 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.tag }}${{ steps.tag.outputs.extra }}
+          tags: ghcr.io/${{ steps.tag.outputs.repo }}:${{ steps.tag.outputs.tag }}${{ steps.tag.outputs.extra }}
