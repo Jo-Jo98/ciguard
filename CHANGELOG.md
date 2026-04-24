@@ -3,6 +3,17 @@
 All notable changes to `ciguard` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.2] — 2026-04-25
+
+### Fixed
+- Container image now publishes for both `linux/amd64` and `linux/arm64`. v0.1.1 shipped amd64-only, which broke `docker pull ghcr.io/jo-jo98/ciguard:latest` on Apple Silicon Macs and arm64 servers (AWS Graviton, Ampere, Raspberry Pi) with `no matching manifest for linux/arm64/v8`.
+
+### Internal
+- All GitHub Actions are SHA-pinned (supply-chain hygiene; eat-our-own-dogfood — `ciguard` flags exactly this in GitLab CI as PIPE-002 / SC-002).
+- Dependabot configured for github-actions, pip (grouped runtime + dev), and docker base image with weekly cadence.
+- ruff now enforced in CI (was advisory in 0.1.1); 30 baseline issues resolved.
+- Required-reviewer protection rule on the `pypi` GitHub environment — release publishes to PyPI now wait for one-click approval.
+
 ## [0.1.1] — 2026-04-24
 
 ### Fixed
