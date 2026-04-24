@@ -51,9 +51,14 @@ jobs:
             echo "tag=manual-$(date +%Y%m%d%H%M%S)" >> $GITHUB_OUTPUT
             echo "extra=" >> $GITHUB_OUTPUT
           fi
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130  # v3 — enables arm64 emulation for multi-arch builds
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
       - uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25  # v5
         with:
           context: .
           push: true
+          # Build for both common server + Apple Silicon Mac architectures.
+          # v0.1.1 shipped amd64 only and broke `docker pull` on M-series Macs
+          # ('no matching manifest for linux/arm64'). Multi-arch added 2026-04-25.
+          platforms: linux/amd64,linux/arm64
           tags: ghcr.io/${{ steps.tag.outputs.repo }}:${{ steps.tag.outputs.tag }}${{ steps.tag.outputs.extra }}
