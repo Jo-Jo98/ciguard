@@ -16,6 +16,6 @@ anthropic>=0.28.0
 # openai>=1.0.0  # uncomment to enable OpenAI support
 
 # Testing
-pytest==8.1.1
-pytest-cov==5.0.0
+pytest==8.4.2
+pytest-cov==7.1.0
 httpx==0.28.1   # async test client for FastAPI
