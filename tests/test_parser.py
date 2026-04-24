@@ -8,13 +8,12 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from ciguard.analyzer.engine import AnalysisEngine
-from ciguard.models.pipeline import Category, Severity
+from ciguard.models.pipeline import Severity
 from ciguard.parser.gitlab_parser import GitLabCIParser
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -348,14 +347,14 @@ class TestGoodPipeline:
     def test_no_critical_findings(self):
         crits = self.report.findings_by_severity(Severity.CRITICAL)
         assert len(crits) == 0, (
-            f"Expected 0 Critical findings, got: "
+            "Expected 0 Critical findings, got: "
             + ", ".join(f"{f.rule_id}: {f.name}" for f in crits)
         )
 
     def test_no_high_findings(self):
         highs = self.report.findings_by_severity(Severity.HIGH)
         assert len(highs) == 0, (
-            f"Expected 0 High findings, got: "
+            "Expected 0 High findings, got: "
             + ", ".join(f"{f.rule_id}: {f.name}" for f in highs)
         )
 

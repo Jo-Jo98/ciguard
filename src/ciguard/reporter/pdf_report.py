@@ -18,18 +18,17 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
 
-from ..models.pipeline import Finding, Report, Severity
+from ..models.pipeline import Report, Severity
 
 # Lazy import so the module can be imported without reportlab installed
 # (graceful degradation — PDFReporter.write() raises ImportError if missing)
 try:
     from reportlab.lib import colors
-    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+    from reportlab.lib.enums import TA_CENTER
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-    from reportlab.lib.units import cm, mm
+    from reportlab.lib.units import cm
     from reportlab.platypus import (
         HRFlowable,
         KeepTogether,
@@ -439,7 +438,6 @@ class PDFReporter:
         rows = [["ID", "Policy", "Severity", "Status", "Evidence"]]
         for r in pr.results:
             status = "PASS" if r.passed else "FAIL"
-            sev_col = _POLICY_SEV_COLOUR_RL.get(r.policy.severity.value, colors.grey)
             rows.append([
                 r.policy.id,
                 Paragraph(_esc(r.policy.name), styles["Small"]),
@@ -608,7 +606,7 @@ class PDFReporter:
 
     @staticmethod
     def _build_styles():
-        base = getSampleStyleSheet()
+        getSampleStyleSheet()  # registers base styles globally; return value unused
         styles = {}
 
         def add(name, **kw):

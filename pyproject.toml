@@ -70,3 +70,8 @@ python_files = ["test_*.py"]
 [tool.ruff]
 line-length = 100
 target-version = "py39"
+
+[tool.ruff.lint.per-file-ignores]
+# Validation scripts insert src/ onto sys.path before importing the package,
+# so they intentionally violate E402 (module-level imports must be at top).
+"scripts/*.py" = ["E402"]

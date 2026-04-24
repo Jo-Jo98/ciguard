@@ -11,7 +11,6 @@ Reads from `.env` at the project root: GITLAB_TOKEN, GITLAB_PROJECT.
 from __future__ import annotations
 
 import json
-import os
 import sys
 import time
 import urllib.parse
@@ -23,7 +22,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from ciguard.parser.gitlab_parser import GitLabCIParser  # noqa: E402
 
 DEMO_FILE = ROOT / "tests" / "fixtures" / "realworld_demo.gitlab-ci.yml"
 ARTIFACT_DIR = ROOT / "tests" / "corpus_results" / "gitlab_real_artifacts"

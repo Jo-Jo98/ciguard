@@ -213,9 +213,6 @@ def _build_stage_data(report: Report) -> List[Dict[str, Any]]:
 
     for stage_name in pipeline.stages:
         jobs_in_stage = [j for j in pipeline.jobs if j.stage == stage_name]
-        # Flag any findings for jobs in this stage
-        finding_locations = {f.location for f in report.findings}
-
         jobs_data = []
         for job in jobs_in_stage:
             job_findings = [f for f in report.findings if f.location == job.name]

@@ -11,7 +11,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -157,7 +156,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     print(f"{_DIM}[{step}/{total_steps}]{_RESET} Writing report ...", end=" ", flush=True)
 
     if output is None:
-        print(f"\n")
+        print("\n")
         _print_terminal_report(report)
         return 2 if crits > 0 else (1 if highs > 0 else 0)
 

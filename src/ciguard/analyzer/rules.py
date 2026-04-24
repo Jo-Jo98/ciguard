@@ -830,7 +830,7 @@ def rule_dep_002(pipeline: Pipeline) -> List[Finding]:
                 severity=Severity.HIGH,
                 category=Category.DEPLOYMENT_GOVERNANCE,
                 location=job.name,
-                evidence=f"Job name suggests production deploy, environment: null",
+                evidence="Job name suggests production deploy, environment: null",
                 remediation=(
                     "Add `environment: name: production` to this job and configure "
                     "deployment protection in GitLab's Environment settings."

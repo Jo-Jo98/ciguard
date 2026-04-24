@@ -1,0 +1,42 @@
+version: 2
+updates:
+  # GitHub Actions — keep workflow action SHAs current.
+  # All actions are SHA-pinned for supply-chain hygiene; Dependabot opens PRs
+  # whenever a referenced tag advances to a new SHA.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies, ci]
+    commit-message:
+      prefix: "chore(actions)"
+
+  # Python — pyproject.toml + requirements.txt.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies, python]
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      runtime:
+        patterns: ["*"]
+        exclude-patterns: ["pytest*", "ruff", "pytest-cov"]
+      dev:
+        patterns: ["pytest*", "ruff", "pytest-cov"]
+
+  # Docker base image — picks up python:3.12-slim refreshes (catches CVE rebases).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 2
+    labels: [dependencies, docker]
+    commit-message:
+      prefix: "chore(docker)"
