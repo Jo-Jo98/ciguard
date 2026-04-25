@@ -9,6 +9,8 @@ Static security auditor for CI/CD pipelines. Scans pipeline configuration files 
 **Supported today:** GitLab CI (`.gitlab-ci.yml`)
 **In development:** GitHub Actions, Jenkins (Declarative Pipeline), SARIF output
 
+> **New to ciguard?** [USAGE.md](USAGE.md) is a practical walkthrough — who benefits, five-minute integrations for GitLab CI / GitHub Actions / Docker, organisational policy patterns, and what the audit-grade reports actually contain.
+
 ## Why
 
 CI/CD pipelines are increasingly the highest-value attack surface in software delivery. Common misconfigurations — hardcoded secrets, unpinned images, unprotected production deployments, privileged runners — are routinely exploited (SolarWinds, Codecov, 3CX). Existing SAST tools scan application code but miss pipeline-level risks. Manual review is slow and inconsistent.
