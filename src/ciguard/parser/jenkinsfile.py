@@ -1,21 +1,32 @@
 """
-Jenkins Declarative Pipeline parser.
+Jenkins Declarative + Scripted Pipeline parser.
 
 Jenkinsfiles are Groovy DSL, not YAML, so we cannot use `yaml.safe_load`.
 A full Groovy AST parser would be massive; instead we hand-roll a small
 Groovy-aware *block tokenizer* that handles the syntactic features we
 care about — comments, single/double/triple-quoted strings, escape
-sequences, nested braces — and extracts the Declarative Pipeline
-skeleton.
+sequences, nested braces — and extracts the pipeline skeleton.
 
 This is intentionally pragmatic: we capture exactly the surface that
-v0.4 security rules reason about (agents, environment bindings, shell
-step bodies). Anything we cannot confidently parse is left as raw text
-and tracked in `parse_warnings`.
+security rules reason about (agents, environment bindings, shell step
+bodies). Anything we cannot confidently parse is left as raw text and
+tracked in `parse_warnings`.
 
-Scripted Pipelines (no top-level `pipeline {}` block) are flagged with
-`is_scripted = True` and an empty model — security analysis of arbitrary
-Groovy is out of scope for v0.4.
+We recognise three shapes (in priority order):
+
+  1. **Declarative** (`pipeline { ... }`) — fixed sections, easy parse.
+  2. **Node-scripted** (`node('label') { stage('…') { sh '…' } }`) —
+     the second-most-common real-world shape, especially for older
+     Jenkinsfiles. Synthesises an `Agent` from the node label and walks
+     the body for `stage('…') { … }` blocks.
+  3. **Shared-library call** (a single top-level `buildPlugin(...)` style
+     invocation) — dominates the `jenkinsci/*` plugin repos. Recognise
+     the shape, surface as `style="shared-library"`, let JKN-LIB-001
+     fire to flag the coverage gap.
+
+Anything else (free-form Groovy with `def`, `if`, multiple statements,
+etc.) sets `is_scripted=True` / `style="scripted-unparseable"` — security
+analysis of arbitrary Groovy is out of scope.
 """
 from __future__ import annotations
 
@@ -23,7 +34,14 @@ import re
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from ..models.jenkinsfile import Agent, EnvBinding, Jenkinsfile, Stage, Step
+from ..models.jenkinsfile import (
+    Agent,
+    EnvBinding,
+    Jenkinsfile,
+    SharedLibraryCall,
+    Stage,
+    Step,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -603,19 +621,71 @@ class JenkinsfileParser:
 
     def parse(self, source: str) -> Jenkinsfile:
         cleaned = _strip_groovy_comments(source)
-        # Locate the top-level `pipeline { ... }` block.
+
+        # 1. Declarative — `pipeline { ... }` at top level.
         blk = _extract_block(cleaned, "pipeline")
-        if blk is None:
+        if blk is not None:
+            _, bs, be = blk
+            jf = self._parse_pipeline_body(cleaned[bs:be])
+            jf.style = "declarative"
+            return jf
+
+        # 2. Node-scripted — one or more top-level `node(...) { ... }` blocks.
+        node_blocks = _find_top_level_node_blocks(cleaned)
+        if node_blocks:
+            return self._parse_node_style(node_blocks)
+
+        # 3. Shared-library call — a single top-level `buildPlugin(...)`-style
+        #    invocation that comprises the entire pipeline.
+        sl = _detect_shared_library(cleaned)
+        if sl is not None:
             return Jenkinsfile(
-                is_scripted=True,
+                style="shared-library",
+                shared_library_call=sl,
                 parse_warnings=[
-                    "No top-level `pipeline {}` block found — file looks like a "
-                    "Scripted Pipeline. v0.4 supports Declarative only."
+                    f"File delegates to shared-library call `{sl.name}(...)`. "
+                    "ciguard cannot audit the library body from this file alone."
                 ],
             )
-        _, bs, be = blk
-        body = cleaned[bs:be]
-        return self._parse_pipeline_body(body)
+
+        # 4. Free-form Scripted — give up.
+        return Jenkinsfile(
+            is_scripted=True,
+            style="scripted-unparseable",
+            parse_warnings=[
+                "Free-form Scripted Pipeline (no `pipeline {}`, no top-level "
+                "`node {}`, not a shared-library call). ciguard cannot model "
+                "arbitrary Groovy control flow."
+            ],
+        )
+
+    def _parse_node_style(self, node_blocks: List[Tuple[Optional[str], str]]) -> Jenkinsfile:
+        """Build a Jenkinsfile model from a list of top-level `node(...) { … }`
+        blocks. Each node block contributes:
+
+          - one Agent (top-level if there's only one node block, otherwise
+            the first node's agent becomes top-level and the rest become
+            per-stage agents on synthetic stages);
+          - stages parsed from `stage('…') { … }` calls inside the node body
+            (or one synthetic "main" stage if no `stage(...)` blocks are
+            present)."""
+        jf = Jenkinsfile(style="node-scripted")
+        # First node block sets the top-level agent (most common case is one node).
+        first_label, first_body = node_blocks[0]
+        jf.agent = _agent_from_node_label(first_label)
+        jf.stages.extend(_parse_node_body_stages(first_body, jf.agent))
+
+        # Multiple top-level `node` blocks: append their stages too. Each
+        # subsequent node may have a different label, so attach the agent
+        # to its synthetic stages so JKN-PIPE-001 / JKN-RUN-* still see it.
+        for label, body in node_blocks[1:]:
+            agent = _agent_from_node_label(label)
+            extra = _parse_node_body_stages(body, agent)
+            for s in extra:
+                if s.agent is None:
+                    s.agent = agent
+            jf.stages.extend(extra)
+        return jf
 
     def _parse_pipeline_body(self, body: str) -> Jenkinsfile:
         jf = Jenkinsfile()
@@ -664,6 +734,193 @@ def _parse_tools_body(body: str) -> dict:
     for m in re.finditer(r"([A-Za-z_][A-Za-z0-9_]*)\s+(['\"])(.*?)\2", body):
         out[m.group(1)] = m.group(3)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Node-scripted parsing (v0.4.1)
+# ---------------------------------------------------------------------------
+
+# `node` followed by an optional ('label') and a `{`.
+_NODE_HEADER_RE = re.compile(r"\bnode\b\s*(\(([^)]*)\))?\s*\{", re.DOTALL)
+
+
+def _find_top_level_node_blocks(src: str) -> List[Tuple[Optional[str], str]]:
+    """Return [(label, body)] for each top-level `node(...) { ... }` block.
+
+    `label` is None if the node call had no string argument or had a
+    closure / map argument we don't try to parse. Walks at brace-depth 0
+    only — nested `node {}` inside a parallel branch is not considered
+    top-level."""
+    out: List[Tuple[Optional[str], str]] = []
+    n = len(src)
+    i = 0
+    depth = 0
+    while i < n:
+        c = src[i]
+        # Skip strings (triple, then single)
+        if c in ("'", '"') and i + 2 < n and src[i + 1] == c and src[i + 2] == c:
+            quote = c * 3
+            end = src.find(quote, i + 3)
+            if end == -1:
+                break
+            i = end + 3
+            continue
+        if c in ("'", '"'):
+            j = i + 1
+            while j < n:
+                if src[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if src[j] == c:
+                    j += 1
+                    break
+                j += 1
+            i = j
+            continue
+        if c == "{":
+            depth += 1
+            i += 1
+            continue
+        if c == "}":
+            depth -= 1
+            i += 1
+            continue
+        if depth == 0:
+            m = _NODE_HEADER_RE.match(src, i)
+            if m:
+                label: Optional[str] = None
+                paren_inner = m.group(2)
+                if paren_inner is not None:
+                    s = _read_string_arg(paren_inner.strip(), 0)
+                    if s is not None:
+                        label = s[0]
+                open_brace = m.end() - 1
+                close_brace = _find_matching_brace(src, open_brace)
+                if close_brace == -1:
+                    break
+                out.append((label, src[open_brace + 1:close_brace]))
+                i = close_brace + 1
+                continue
+        i += 1
+    return out
+
+
+def _agent_from_node_label(label: Optional[str]) -> Agent:
+    """Synthesise an Agent from a `node('label')` argument. `node()` or
+    `node` with no arg → `agent any` equivalent (worth flagging via
+    JKN-RUN-001). `node('linux')` → `agent { label 'linux' }` equivalent."""
+    if label:
+        return Agent(kind="label", label=label, raw=f"node('{label}')")
+    return Agent(kind="any", raw="node")
+
+
+def _parse_node_body_stages(body: str, agent: Agent) -> List[Stage]:
+    """Walk a node body for top-level `stage('name') { … }` blocks. Steps
+    inside Scripted stages are not wrapped in `steps { }` — they are
+    direct statements — so the body of each stage is parsed straight via
+    `_parse_steps_body`. Returns synthesised stages.
+
+    If no `stage(...)` blocks are present, the entire node body is treated
+    as a single synthetic "main" stage. This is rare but happens in
+    minimal Scripted pipelines that just put `sh '...'` inside `node {}`."""
+    stages: List[Stage] = []
+    i = 0
+    while True:
+        m = _STAGE_HEADER_RE.search(body, i)
+        if not m:
+            break
+        name = m.group(2)
+        open_brace = m.end() - 1
+        close_brace = _find_matching_brace(body, open_brace)
+        if close_brace == -1:
+            break
+        inner = body[open_brace + 1:close_brace]
+        stage = Stage(name=name, agent=agent)
+        stage.steps = _parse_steps_body(inner)
+        stages.append(stage)
+        i = close_brace + 1
+    if not stages:
+        # Fall back: treat the whole node body as one stage. Strip leading
+        # whitespace; if there's nothing actionable left, skip.
+        stripped = body.strip()
+        if stripped:
+            stage = Stage(name="main", agent=agent)
+            stage.steps = _parse_steps_body(body)
+            stages.append(stage)
+    return stages
+
+
+# ---------------------------------------------------------------------------
+# Shared-library call detection (v0.4.1)
+# ---------------------------------------------------------------------------
+
+# Reserved names that must NOT be treated as shared-library calls — they
+# have their own parser paths or imply free-form Scripted code.
+_RESERVED_TOP_LEVEL_NAMES = frozenset({
+    "pipeline", "node", "stage", "stages", "steps", "def", "class",
+    "if", "for", "while", "return", "import", "package", "library",
+    "withCredentials", "withEnv", "timeout", "lock", "parallel", "sh",
+    "bat", "powershell", "pwsh", "echo", "script",
+})
+
+
+def _detect_shared_library(src: str) -> Optional[SharedLibraryCall]:
+    """If `src` (after comment stripping) is *exactly* a single top-level
+    function call — optionally preceded by a shebang and `@Library(...)`
+    annotation lines — return a SharedLibraryCall describing it. Otherwise
+    None.
+
+    The canonical case is the `jenkinsci/*` plugin pattern:
+
+        @Library('common-jenkinsci') _
+        buildPlugin(useContainerAgent: true, configurations: [...])
+
+    Multi-statement files, files with `def` assignments, files with
+    control flow — none of these qualify as a clean shared-library call."""
+    stripped = src.strip()
+    # Strip optional shebang line.
+    if stripped.startswith("#!"):
+        nl = stripped.find("\n")
+        if nl == -1:
+            return None
+        stripped = stripped[nl + 1:].strip()
+    # Strip any number of leading `@Annotation(...) _?` lines (the trailing
+    # underscore is a Jenkins convention for global library imports).
+    while stripped.startswith("@"):
+        # Find the end of the annotation: balance parens, then consume
+        # the rest of the line (which may have a trailing `_`).
+        if "(" in stripped.split("\n", 1)[0]:
+            paren_open = stripped.index("(")
+            paren_close = _find_matching_paren(stripped, paren_open)
+            if paren_close == -1:
+                return None
+            after = paren_close + 1
+        else:
+            after = len(stripped.split("\n", 1)[0])
+        # Consume rest of line including optional trailing `_`.
+        nl = stripped.find("\n", after)
+        if nl == -1:
+            return None
+        stripped = stripped[nl + 1:].strip()
+
+    # Must now look exactly like `name(args)` with nothing after.
+    m = re.match(r"([A-Za-z_][A-Za-z0-9_]*)\s*\(", stripped)
+    if not m:
+        return None
+    name = m.group(1)
+    if name in _RESERVED_TOP_LEVEL_NAMES:
+        return None
+    paren_open = m.end() - 1
+    paren_close = _find_matching_paren(stripped, paren_open)
+    if paren_close == -1:
+        return None
+    # Anything non-whitespace after the closing paren disqualifies — multi-
+    # statement Scripted is not a shared-library call.
+    trailing = stripped[paren_close + 1:].strip()
+    if trailing:
+        return None
+    raw_args = stripped[paren_open + 1:paren_close].strip()
+    return SharedLibraryCall(name=name, raw_args=raw_args)
 
 
 # ---------------------------------------------------------------------------

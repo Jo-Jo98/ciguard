@@ -3,6 +3,22 @@
 All notable changes to `ciguard` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.1] — 2026-04-25
+
+### Added
+- **Minimal Scripted Pipeline support.** The Jenkins parser now recognises four shapes (in priority order): `declarative` (existing `pipeline {}` path), `node-scripted` (top-level `node('label') { stage('…') { sh '…' } }` blocks), `shared-library` (a single top-level `buildPlugin(...)`-style call, optionally preceded by `@Library('lib') _`), and `scripted-unparseable` (free-form Groovy with `def` / control flow / multiple statements — out of scope, the engine produces an empty report and the CLI emits a clearer warning). The `Jenkinsfile.style` field exposes which path was taken.
+- **`JKN-LIB-001` — Shared-Library Delegation** (Info, Pipeline Integrity). Fires when a Jenkinsfile is exclusively a shared-library call. The actual pipeline body lives in the library's `vars/<name>.groovy` and ciguard cannot audit that from this file alone — the finding flags the coverage gap so a clean report is not silently mistaken for a clean build. Severity is Info (1-pt deduction, capped at 5/category).
+- **Real-world corpus validator** at `scripts/validate_jenkins_corpus.py`. Mirrors the GitLab-side `validate_corpus.py`: fetches Jenkinsfiles from public GitHub repos, runs them through the parser + engine, writes `tests/corpus_results/JENKINS_SUMMARY.md` with shape breakdown, finding counts, and timings. Cache at `tests/corpus_jenkins/` (gitignored).
+- **Labelled-fixture validation extended to Jenkins.** `scripts/validate_fixtures.py` now dispatches by `kind` (`gitlab` vs `jenkins`) and includes recall + precision checks for all six Jenkins fixtures (declarative, node-scripted, shared-library, free-form Scripted — bad and good of each shape where applicable). All six pass at 100% recall, zero false positives.
+
+### Changed
+- **`is_scripted` semantics narrowed.** The flag now means *only* "free-form Scripted Groovy that ciguard cannot model" (`style == "scripted-unparseable"`). Node-style Scripted and shared-library calls — which `v0.4.0` would have flagged the same way — are now in scope and produce real findings or coverage-gap signals. Backwards compatible: existing callers that gated on `is_scripted` see the same boolean for the genuinely-unparseable case.
+- **CLI summary line for Jenkinsfiles** distinguishes the four shapes with appropriate WARN/OK colouring instead of the previous Declarative-vs-bail dichotomy.
+
+### Validation
+- **267 / 267 tests passing** (was 249 in `v0.4.0`; +18 for the new shapes and `JKN-LIB-001`).
+- **Real-world corpus impact on a 14-Jenkinsfile sample**: in-scope coverage rose from 2 / 14 (14%) to 11 / 14 (79%); silent-empty reports went from 12 / 14 to 0 / 14. The 3 remaining out-of-scope files (`jenkinsci/jenkins`, `jenkinsci/docker`, `jenkinsci/docker-agent`) are genuinely free-form Groovy with top-level `def` / `properties([...])` / dynamic `combinations { }` blocks. Parser remained crash-free across all 14 inputs.
+
 ## [0.4.0] — 2026-04-25
 
 ### Added

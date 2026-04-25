@@ -106,12 +106,16 @@ class TestGoodJenkinsfile:
 # ---------------------------------------------------------------------------
 
 class TestEdgeCases:
-    def test_scripted_pipeline_falls_back(self):
+    def test_node_only_no_stages_now_handled(self):
+        """v0.4.1: a bare `node('master') { sh '…' }` with no stage(...)
+        block is parsed as node-style with one synthetic 'main' stage,
+        not as unparseable Scripted."""
         scripted = "node('master') {\n    sh 'echo hi'\n}\n"
         jf = parser.parse(scripted)
-        assert jf.is_scripted is True
-        assert jf.parse_warnings, "should surface a warning"
-        assert jf.stages == []
+        assert jf.is_scripted is False
+        assert jf.style == "node-scripted"
+        assert len(jf.stages) == 1 and jf.stages[0].name == "main"
+        assert jf.agent and jf.agent.label == "master"
 
     def test_braces_in_strings_dont_break_block_extraction(self):
         src = """
@@ -186,3 +190,87 @@ class TestLooksLikeJenkinsfile:
         p = tmp_path / "ci.yml"
         p.write_text("stages:\n  - build\n")
         assert looks_like_jenkinsfile(p) is False
+
+
+# ---------------------------------------------------------------------------
+# Node-scripted parsing (v0.4.1)
+# ---------------------------------------------------------------------------
+
+class TestNodeScripted:
+    def setup_method(self):
+        self.jf = parser.parse_file(FIXTURES / "bad_node_scripted.Jenkinsfile")
+
+    def test_style_is_node_scripted(self):
+        assert self.jf.style == "node-scripted"
+        assert self.jf.is_scripted is False
+
+    def test_unlabelled_node_synthesises_any_agent(self):
+        # `node {` with no label → JKN-RUN-001 should fire (kind == "any").
+        assert self.jf.agent is not None
+        assert self.jf.agent.kind == "any"
+
+    def test_stages_extracted(self):
+        names = [s.name for s in self.jf.stages]
+        assert names == ["Build", "Deploy"]
+
+    def test_sh_steps_captured(self):
+        scripts = self.jf.all_step_scripts()
+        joined = " ".join(s for _, s in scripts)
+        assert "curl -sSL" in joined
+        assert "eval " in joined
+
+    def test_stage_inherits_synthetic_agent(self):
+        # Every Scripted stage should carry the node-derived agent so
+        # JKN-PIPE-001 / JKN-RUN-* still see it.
+        for stage in self.jf.stages:
+            assert stage.agent is not None
+            assert stage.agent.kind == "any"
+
+    def test_good_node_scripted_clean(self):
+        jf = parser.parse_file(FIXTURES / "good_node_scripted.Jenkinsfile")
+        assert jf.style == "node-scripted"
+        assert jf.agent.kind == "label" and jf.agent.label == "build-trusted"
+        assert [s.name for s in jf.stages] == ["Build", "Test", "Publish"]
+
+
+# ---------------------------------------------------------------------------
+# Shared-library detection (v0.4.1)
+# ---------------------------------------------------------------------------
+
+class TestSharedLibraryCall:
+    def test_buildplugin_with_library_annotation(self):
+        jf = parser.parse_file(FIXTURES / "shared_library_call.Jenkinsfile")
+        assert jf.style == "shared-library"
+        assert jf.shared_library_call is not None
+        assert jf.shared_library_call.name == "buildPlugin"
+        assert "configurations" in jf.shared_library_call.raw_args
+        assert jf.is_scripted is False
+
+    def test_bare_function_call_no_annotation(self):
+        jf = parser.parse("buildPluginWithGradle()\n")
+        assert jf.style == "shared-library"
+        assert jf.shared_library_call.name == "buildPluginWithGradle"
+
+    def test_reserved_name_not_shared_library(self):
+        # `node()` shouldn't be misclassified as a shared-library call.
+        jf = parser.parse("node('linux') { stage('a') { sh 'echo' } }")
+        assert jf.style == "node-scripted"
+
+    def test_multi_statement_disqualifies(self):
+        # Two top-level calls is not a clean delegation.
+        jf = parser.parse("buildPlugin()\nbuildPlugin()\n")
+        assert jf.style == "scripted-unparseable"
+        assert jf.is_scripted is True
+
+
+# ---------------------------------------------------------------------------
+# Free-form Scripted bail (v0.4.1)
+# ---------------------------------------------------------------------------
+
+class TestFreeformScripted:
+    def test_def_and_if_branches_unparseable(self):
+        jf = parser.parse_file(FIXTURES / "freeform_scripted.Jenkinsfile")
+        assert jf.style == "scripted-unparseable"
+        assert jf.is_scripted is True
+        assert jf.stages == []
+        assert jf.parse_warnings, "should surface a warning"

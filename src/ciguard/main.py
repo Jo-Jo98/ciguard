@@ -112,10 +112,23 @@ def cmd_scan(args: argparse.Namespace) -> int:
             f"({len(workflow.jobs)} jobs, GitHub Actions workflow)"
         )
     elif isinstance(target_for_summary, Jenkinsfile):
-        if jenkinsfile.is_scripted:
+        if jenkinsfile.style == "scripted-unparseable":
             print(
                 f"{_YELLOW}WARN{_RESET}  "
-                f"(no `pipeline {{}}` block — Scripted Pipelines are out of scope for v0.4)"
+                f"(free-form Scripted Pipeline — ciguard cannot model arbitrary "
+                f"Groovy control flow; file a feature request if this matters)"
+            )
+        elif jenkinsfile.style == "shared-library":
+            lib = jenkinsfile.shared_library_call
+            print(
+                f"{_YELLOW}OK{_RESET}  "
+                f"(delegates to shared-library call `{lib.name}(...)` — "
+                f"audit the library separately; JKN-LIB-001 will fire)"
+            )
+        elif jenkinsfile.style == "node-scripted":
+            print(
+                f"{_GREEN}OK{_RESET}  "
+                f"({len(jenkinsfile.stages)} stages, Jenkins node-style Scripted Pipeline)"
             )
         else:
             print(

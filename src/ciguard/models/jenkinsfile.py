@@ -34,8 +34,18 @@ about — agents (where code runs), environment bindings (secret leakage),
 shell steps (the supply-chain blast radius). It is intentionally NOT a
 full Groovy AST.
 
-Scripted Pipelines (no top-level `pipeline {}` block) are out of scope
-for v0.4 — the parser surfaces a parse warning rather than guessing.
+Beyond Declarative, v0.4.1 added two more shapes the parser recognises:
+
+  - **node-style Scripted** (`node('label') { stage('…') { sh '…' } }`) —
+    surfaces in this model with `style="node-scripted"` and stages built
+    from the `stage(...)` calls inside the node block.
+  - **Shared-library call** (a single top-level `buildPlugin(...)` style
+    invocation) — surfaces with `style="shared-library"` and
+    `shared_library_call` set. The actual security surface lives in the
+    library, which ciguard cannot see from this file alone.
+
+Anything else (free-form Groovy with control flow, multiple statements,
+def assignments) sets `style="scripted-unparseable"` and we bail.
 """
 from __future__ import annotations
 
@@ -109,8 +119,19 @@ class Stage(BaseModel):
         return out
 
 
+class SharedLibraryCall(BaseModel):
+    """A top-level shared-library invocation like `buildPlugin(...)` that
+    is the entire content of the Jenkinsfile. The actual pipeline body
+    lives in the library's `vars/<name>.groovy` — ciguard cannot audit
+    from this file alone, so the value of recognising the shape is to
+    surface a coverage-gap finding (JKN-LIB-001) instead of silently
+    producing an empty report."""
+    name: str                            # e.g. "buildPlugin"
+    raw_args: str = ""                   # everything between ( and )
+
+
 class Jenkinsfile(BaseModel):
-    """A parsed Declarative Pipeline."""
+    """A parsed Jenkinsfile in any of the supported shapes."""
     agent: Optional[Agent] = None
     environment: List[EnvBinding] = Field(default_factory=list)
     options: List[str] = Field(default_factory=list)         # raw option statements
@@ -120,8 +141,14 @@ class Jenkinsfile(BaseModel):
     stages: List[Stage] = Field(default_factory=list)
     post_blocks: Dict[str, List[Step]] = Field(default_factory=dict)
 
+    # Pipeline shape — controls how rules and reporters describe the file.
+    # Possible values: "declarative" | "node-scripted" | "shared-library"
+    # | "scripted-unparseable"
+    style: str = "declarative"
+    shared_library_call: Optional[SharedLibraryCall] = None
+
     # Diagnostics
-    is_scripted: bool = False            # True if no `pipeline {}` block was found
+    is_scripted: bool = False            # True only when style == "scripted-unparseable"
     parse_warnings: List[str] = Field(default_factory=list)
 
     def all_agents(self) -> List[Agent]:

@@ -6,8 +6,14 @@ Validates the two PRD acceptance criteria that need ground truth:
   1. Recall: ≥90% of rules expected to fire on `bad_pipeline.yml` actually fire.
   2. Precision: zero false positives on `good_pipeline.yml`.
 
+Plus per-fixture recall/precision checks for Jenkins fixtures (v0.4.1):
+  - bad_jenkinsfile / good_jenkinsfile (Declarative)
+  - bad_node_scripted / good_node_scripted (node-style Scripted)
+  - shared_library_call (single JKN-LIB-001 finding expected)
+  - freeform_scripted (zero findings expected — bail path)
+
 Each fixture is annotated below with the set of rule IDs that *should* fire
-("expected_rules"). For `good_pipeline.yml` the expected set is empty.
+("expected_rules"). For `good_*` fixtures the expected set is empty.
 
 The expectations are derived from the inline comments in the fixtures
 themselves and the PRD rule catalogue. They are documentation: if the
@@ -30,6 +36,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from ciguard.analyzer.engine import AnalysisEngine
 from ciguard.parser.gitlab_parser import GitLabCIParser
+from ciguard.parser.jenkinsfile import JenkinsfileParser
 
 FIXTURES = ROOT / "tests" / "fixtures"
 RESULTS_DIR = ROOT / "tests" / "corpus_results"
@@ -88,18 +95,80 @@ LABELS: dict[str, dict] = {
         "max_false_positives": None,
         "not_exercised": set(),
     },
+    # ----- Jenkins fixtures (v0.4.1) ---------------------------------------
+    # `kind` defaults to "gitlab"; "jenkins" means parse with JenkinsfileParser
+    # and look up `tests/fixtures/jenkins/<name>.Jenkinsfile`.
+    "bad_jenkinsfile": {
+        "kind": "jenkins",
+        "expected_rules": {
+            "JKN-PIPE-001",  # maven:latest + alpine
+            "JKN-IAM-001",   # API_TOKEN, DB_PASSWORD literals
+            "JKN-RUN-001",   # agent any
+            "JKN-RUN-002",   # --privileged + docker socket
+            "JKN-SC-001",    # curl|bash, eval $VAR, wget|sh
+            "JKN-SC-002",    # script {} block
+        },
+        "max_false_positives": 0,
+        "not_exercised": {"JKN-LIB-001"},  # not a shared-library call
+    },
+    "good_jenkinsfile": {
+        "kind": "jenkins",
+        "expected_rules": set(),
+        "max_false_positives": 0,
+        "not_exercised": set(),
+    },
+    "bad_node_scripted": {
+        "kind": "jenkins",
+        "expected_rules": {
+            "JKN-RUN-001",   # `node` (no label) ≡ agent any
+            "JKN-SC-001",    # curl|bash + eval $VAR
+        },
+        "max_false_positives": 0,
+        "not_exercised": {
+            "JKN-PIPE-001", "JKN-IAM-001", "JKN-RUN-002",
+            "JKN-SC-002", "JKN-LIB-001",
+        },
+    },
+    "good_node_scripted": {
+        "kind": "jenkins",
+        "expected_rules": set(),
+        "max_false_positives": 0,
+        "not_exercised": set(),
+    },
+    "shared_library_call": {
+        "kind": "jenkins",
+        "expected_rules": {"JKN-LIB-001"},
+        "max_false_positives": 0,
+        "not_exercised": {
+            "JKN-PIPE-001", "JKN-IAM-001", "JKN-RUN-001",
+            "JKN-RUN-002", "JKN-SC-001", "JKN-SC-002",
+        },
+    },
+    "freeform_scripted": {
+        "kind": "jenkins",
+        # Free-form Scripted intentionally bails — zero findings expected.
+        # Anything firing here is a false positive (rules cannot reason
+        # about arbitrary Groovy and shouldn't pretend to).
+        "expected_rules": set(),
+        "max_false_positives": 0,
+        "not_exercised": set(),
+    },
 }
 
 
-def scan(fixture: str):
-    parser = GitLabCIParser()
+def scan(fixture: str, kind: str = "gitlab"):
     engine = AnalysisEngine()
-    pipeline = parser.parse_file(FIXTURES / f"{fixture}.yml")
+    if kind == "jenkins":
+        target = JenkinsfileParser().parse_file(
+            FIXTURES / "jenkins" / f"{fixture}.Jenkinsfile"
+        )
+        return engine.analyse(target, f"{fixture}.Jenkinsfile")
+    pipeline = GitLabCIParser().parse_file(FIXTURES / f"{fixture}.yml")
     return engine.analyse(pipeline, f"{fixture}.yml")
 
 
 def evaluate(fixture: str, label: dict) -> dict:
-    report = scan(fixture)
+    report = scan(fixture, kind=label.get("kind", "gitlab"))
     fired = Counter(f.rule_id for f in report.findings)
     fired_set = set(fired.keys())
 
@@ -145,7 +214,9 @@ def main() -> int:
     out.append("Validates PRD acceptance criteria 1 (≥90% TP on `bad_pipeline.yml`) and 2 (zero FPs on `good_pipeline.yml`).\n")
 
     for r in results:
-        out.append(f"\n## `{r['fixture']}.yml`\n")
+        kind = LABELS[r["fixture"]].get("kind", "gitlab")
+        suffix = ".Jenkinsfile" if kind == "jenkins" else ".yml"
+        out.append(f"\n## `{r['fixture']}{suffix}`\n")
         out.append(f"- Score: **{r['score']}** ({r['grade']})")
         out.append(f"- Rules fired: {r['fired'] or 'none'}")
         if r["expected"]:

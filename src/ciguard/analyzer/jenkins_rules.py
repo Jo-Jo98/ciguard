@@ -12,6 +12,7 @@ v0.4 ruleset (cross-platform analogues in parens):
     JKN-RUN-002   Privileged docker agent (`args '--privileged'`)     (cf. RUN-002 / GHA-RUN-002)
     JKN-SC-001    Dangerous shell pattern in `sh`/`bat`/`pwsh`        (cf. PIPE-003 / GHA-SC-001)
     JKN-SC-002    Dynamic-Groovy `script { }` block inside steps      (Jenkins-specific)
+    JKN-LIB-001   Shared-library delegation (coverage-gap signal)     (Jenkins-specific, v0.4.1)
 
 Roadmap (v0.4.x):
     JKN-DEP-001   Production deploy stage without manual `input`
@@ -380,6 +381,59 @@ def rule_jkn_sc_002(jf: Jenkinsfile) -> List[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# JKN-LIB-001 — Shared-library delegation (coverage gap)
+# ---------------------------------------------------------------------------
+
+def rule_jkn_lib_001(jf: Jenkinsfile) -> List[Finding]:
+    """The Jenkinsfile is a single top-level shared-library call (e.g.
+    `buildPlugin(...)`). The actual security-relevant pipeline body lives
+    in the library's `vars/<name>.groovy` and ciguard cannot audit that
+    from this file alone.
+
+    INFO severity — this is a *coverage gap*, not a defect. We surface it
+    so users know the report's silence is meaningful only if the library
+    has also been audited. Without this finding the report would be
+    silently empty and look like a clean bill of health."""
+    if jf.shared_library_call is None:
+        return []
+    lib = jf.shared_library_call
+    args_preview = lib.raw_args[:120].replace("\n", " ").strip()
+    if len(lib.raw_args) > 120:
+        args_preview += " …"
+    compliance = ComplianceMapping(
+        iso_27001=["A.14.2.5", "A.12.5.1"],
+        soc2=["CC8.1"],
+        nist=["PR.IP-1"],
+    )
+    return [Finding(
+        id=_finding_id("JKN-LIB-001"),
+        rule_id="JKN-LIB-001",
+        name="Shared-Library Delegation",
+        description=(
+            f"This Jenkinsfile delegates entirely to the shared-library "
+            f"call `{lib.name}(...)`. The pipeline body lives in the "
+            f"library's `vars/{lib.name}.groovy`, which ciguard cannot "
+            "see from this file alone. A clean ciguard report on this "
+            "file does NOT mean the build is safe — only that there are "
+            "no findings in the call site itself."
+        ),
+        severity=Severity.INFO,
+        category=Category.PIPELINE_INTEGRITY,
+        location="<top-level>",
+        evidence=f"{lib.name}({args_preview})",
+        remediation=(
+            f"Locate the shared library that defines `vars/{lib.name}.groovy` "
+            "(usually configured under Manage Jenkins → Configure System → "
+            "Global Pipeline Libraries) and run ciguard against the "
+            "library's own Jenkinsfile / Groovy sources. Pin the library "
+            "version in this file via `@Library('lib@<sha>') _` so the "
+            "exact code that runs is reproducible."
+        ),
+        compliance=compliance,
+    )]
+
+
+# ---------------------------------------------------------------------------
 # Rule registry
 # ---------------------------------------------------------------------------
 
@@ -390,4 +444,5 @@ JENKINS_RULES: List[JenkinsRuleFunc] = [
     rule_jkn_run_002,
     rule_jkn_sc_001,
     rule_jkn_sc_002,
+    rule_jkn_lib_001,
 ]
