@@ -86,6 +86,14 @@ class PolicyDefinition(BaseModel):
     remediation: str
     tags:        List[str] = Field(default_factory=list)
     source:      str = "builtin"   # "builtin" | path to YAML file
+    # Which platforms this policy applies to. Empty list = all platforms
+    # (sensible default for user-supplied custom policies that key off
+    # generic checks like `max_findings`).
+    platforms:   List[str] = Field(default_factory=list)
+
+    def applies_to(self, platform: str) -> bool:
+        """True if this policy should be evaluated for the given platform."""
+        return not self.platforms or platform in self.platforms
 
 
 # ---------------------------------------------------------------------------

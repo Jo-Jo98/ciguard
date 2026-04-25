@@ -118,12 +118,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
         f"{_YELLOW}{highs} High{_RESET})"
     )
 
-    # ---- Policy evaluation (optional). The 7 built-in policies are tuned for
-    # GitLab CI rule IDs (POL-001 references DEP-001, POL-002 references PIPE-001
-    # etc.); they don't fire on GHA-namespaced findings. For GHA scans we still
-    # run *user-supplied* policies but skip the built-ins. GHA-aware built-ins
-    # are tracked for v0.2.x.
-    is_gha = isinstance(target_for_summary, Workflow)
+    # ---- Policy evaluation (optional). Built-in policies declare which
+    # platforms they apply to (`platforms: ["gitlab-ci"]` or `["github-actions"]`);
+    # the evaluator filters by `report.platform`, so we always pass the full
+    # built-in set. User-supplied policies default to all-platforms.
     pipeline_for_policy = report.pipeline   # synthesised Pipeline for GHA path
     if args.policies:
         print(f"{_DIM}[{step}/{total_steps}]{_RESET} Evaluating policies ...", end=" ", flush=True)
@@ -138,9 +136,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
             print(f"{_YELLOW}SKIP{_RESET}  (path not found: {policies_path})")
             custom_policies = []
 
-        all_policies = (
-            custom_policies if is_gha else BUILTIN_POLICIES + custom_policies
-        )
+        all_policies = BUILTIN_POLICIES + custom_policies
         pol_evaluator = PolicyEvaluator()
         pol_report = pol_evaluator.evaluate(all_policies, pipeline_for_policy, report)
         report.policy_report = pol_report
@@ -151,8 +147,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
             f"{pc}{pol_report.failed} failed{_RESET}, "
             f"{_GREEN}{pol_report.passed} passed{_RESET})"
         )
-    elif not args.no_builtin_policies and not is_gha:
-        # Built-ins for GitLab CI only (see comment above).
+    elif not args.no_builtin_policies:
         pol_evaluator = PolicyEvaluator()
         pol_report = pol_evaluator.evaluate(BUILTIN_POLICIES, pipeline_for_policy, report)
         report.policy_report = pol_report

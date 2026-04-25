@@ -41,7 +41,12 @@ evaluator = PolicyEvaluator()
 
 class TestPolicyModels:
     def test_builtin_count(self):
-        assert len(BUILTIN_POLICIES) == 7
+        # 7 GitLab CI built-ins + 6 GitHub Actions built-ins (added in v0.2.1).
+        assert len(BUILTIN_POLICIES) == 13
+        gitlab = [p for p in BUILTIN_POLICIES if p.applies_to("gitlab-ci") and not p.applies_to("github-actions")]
+        gha = [p for p in BUILTIN_POLICIES if p.applies_to("github-actions") and not p.applies_to("gitlab-ci")]
+        assert len(gitlab) == 7
+        assert len(gha) == 6
 
     def test_builtin_ids_unique(self):
         ids = [p.id for p in BUILTIN_POLICIES]
@@ -83,11 +88,15 @@ class TestGoodPipelinePolicies:
         assert isinstance(self.pol_report, PolicyReport)
 
     def test_correct_count(self):
-        assert self.pol_report.policies_evaluated == len(BUILTIN_POLICIES)
+        # Evaluator filters by `report.platform`; for a GitLab CI report, only
+        # GitLab-applicable built-ins are evaluated.
+        applicable = [p for p in BUILTIN_POLICIES if p.applies_to("gitlab-ci")]
+        assert self.pol_report.policies_evaluated == len(applicable)
 
     def test_most_pass(self):
-        # Good pipeline should pass the majority of policies
-        assert self.pol_report.passed >= len(BUILTIN_POLICIES) * 0.5
+        # Good pipeline should pass the majority of applicable policies
+        applicable = [p for p in BUILTIN_POLICIES if p.applies_to("gitlab-ci")]
+        assert self.pol_report.passed >= len(applicable) * 0.5
 
     def test_result_shape(self):
         for r in self.pol_report.results:
@@ -364,7 +373,92 @@ class TestPolicyLoader:
         report   = engine.analyse(pipeline)
         pol_report = evaluator.evaluate(all_policies, pipeline, report)
 
-        assert pol_report.policies_evaluated == len(BUILTIN_POLICIES) + 1
+        # GitLab-applicable built-ins + the custom (no `platforms` set, so
+        # applies everywhere)
+        gitlab_builtins = sum(1 for p in BUILTIN_POLICIES if p.applies_to("gitlab-ci"))
+        assert pol_report.policies_evaluated == gitlab_builtins + 1
         # CUSTOM-001 should fail (bad pipeline has > 20 findings)
         custom_result = next(r for r in pol_report.results if r.policy.id == "CUSTOM-001")
         assert not custom_result.passed
+
+
+# ---------------------------------------------------------------------------
+# GHA built-in policies (v0.2.1) + cross-platform isolation
+# ---------------------------------------------------------------------------
+
+class TestGHABuiltinPolicies:
+    """The 6 GHA built-ins (POL-GHA-001..006) fire correctly against the
+    bad_actions fixture, and don't fire against good_actions."""
+
+    def setup_method(self):
+        from ciguard.parser.github_actions import GitHubActionsParser
+        gha = GitHubActionsParser()
+        bad_wf = gha.parse_file(
+            Path(__file__).parent / "fixtures" / "github_actions" / "bad_actions.yml"
+        )
+        good_wf = gha.parse_file(
+            Path(__file__).parent / "fixtures" / "github_actions" / "good_actions.yml"
+        )
+        self.bad_report = engine.analyse(bad_wf, "bad_actions.yml")
+        self.good_report = engine.analyse(good_wf, "good_actions.yml")
+
+    def test_only_gha_builtins_evaluated_for_gha_report(self):
+        pr = evaluator.evaluate(BUILTIN_POLICIES, self.bad_report.pipeline, self.bad_report)
+        # All 6 GHA built-ins fire; the 7 GitLab built-ins are filtered out.
+        assert pr.policies_evaluated == 6
+        for r in pr.results:
+            assert r.policy.id.startswith("POL-GHA-")
+
+    def test_all_six_gha_builtins_fail_on_bad_actions(self):
+        pr = evaluator.evaluate(BUILTIN_POLICIES, self.bad_report.pipeline, self.bad_report)
+        failed_ids = {r.policy.id for r in pr.results if not r.passed}
+        # Every GHA built-in's underlying GHA-* rule fires on bad_actions
+        expected = {f"POL-GHA-{n:03d}" for n in range(1, 7)}
+        assert expected <= failed_ids, f"Missing failures: {expected - failed_ids}"
+
+    def test_all_six_gha_builtins_pass_on_good_actions(self):
+        pr = evaluator.evaluate(BUILTIN_POLICIES, self.good_report.pipeline, self.good_report)
+        assert pr.policies_evaluated == 6
+        assert pr.failed == 0
+        assert pr.passed == 6
+
+
+class TestPolicyPlatformFilter:
+    """Policy platform filter behaviour."""
+
+    def test_user_policy_no_platforms_runs_everywhere(self):
+        # A user policy with `platforms=[]` (the default) applies to both.
+        from ciguard.parser.github_actions import GitHubActionsParser
+        gha = GitHubActionsParser()
+        wf = gha.parse_file(
+            Path(__file__).parent / "fixtures" / "github_actions" / "good_actions.yml"
+        )
+        report = engine.analyse(wf)
+        custom = PolicyDefinition(
+            id="UNIV-1", name="Universal", description="-",
+            severity=PolicySeverity.LOW,
+            condition=PolicyCondition(type="max_findings", max_count=9999),
+            remediation="-",
+            # platforms=[] by default
+        )
+        pr = evaluator.evaluate([custom], report.pipeline, report)
+        assert pr.policies_evaluated == 1
+        assert pr.passed == 1
+
+    def test_gitlab_only_policy_skipped_on_gha_scan(self):
+        from ciguard.parser.github_actions import GitHubActionsParser
+        gha = GitHubActionsParser()
+        wf = gha.parse_file(
+            Path(__file__).parent / "fixtures" / "github_actions" / "good_actions.yml"
+        )
+        report = engine.analyse(wf)
+        gitlab_only = PolicyDefinition(
+            id="GLO-1", name="GitLab-only", description="-",
+            severity=PolicySeverity.LOW,
+            condition=PolicyCondition(type="max_findings", max_count=0),
+            remediation="-",
+            platforms=["gitlab-ci"],
+        )
+        pr = evaluator.evaluate([gitlab_only], report.pipeline, report)
+        assert pr.policies_evaluated == 0   # filtered out
+        assert pr.results == []

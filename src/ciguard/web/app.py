@@ -27,6 +27,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from ciguard.analyzer.engine import AnalysisEngine
+from ciguard.parser.github_actions import parse_file as auto_parse_file
 from ciguard.parser.gitlab_parser import GitLabCIParser
 from ciguard.reporter.html_report import HTMLReporter
 from ciguard.web.scan_store import get_store
@@ -62,8 +63,9 @@ def api_health():
 
 
 @app.post("/api/scan", tags=["api"])
-async def api_scan(file: UploadFile = File(..., description="The .gitlab-ci.yml file to scan")):
-    """Upload and scan a GitLab CI pipeline file.
+async def api_scan(file: UploadFile = File(..., description="A GitLab CI .yml or GitHub Actions workflow file")):
+    """Upload and scan a pipeline file. Format (GitLab CI vs GitHub Actions)
+    is auto-detected from the YAML shape.
 
     Returns a ``scan_id`` and high-level summary. Use
     ``GET /api/report/{scan_id}`` for the full JSON report.
@@ -86,19 +88,20 @@ async def api_scan(file: UploadFile = File(..., description="The .gitlab-ci.yml 
         tmp_path = Path(tmp.name)
 
     try:
-        pipeline = _parser.parse_file(tmp_path)
+        target = auto_parse_file(tmp_path)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     finally:
         tmp_path.unlink(missing_ok=True)
 
-    report = _engine.analyse(pipeline, pipeline_name=file.filename)
+    report = _engine.analyse(target, pipeline_name=file.filename)
     scan_id = get_store().put(report)
 
     by_sev = report.summary.get("by_severity", {})
     return {
         "scan_id": scan_id,
         "pipeline_name": report.pipeline_name,
+        "platform": report.platform,
         "scan_timestamp": report.scan_timestamp,
         "overall_score": report.risk_score.overall,
         "grade": report.risk_score.grade,

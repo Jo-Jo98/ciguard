@@ -157,6 +157,12 @@ class PolicyEvaluator:
         results: List[PolicyResult] = []
 
         for policy in policies:
+            # Skip policies that don't apply to this scan's platform.
+            # `platforms=[]` means "applies everywhere" (default for user
+            # policies that test platform-agnostic conditions).
+            if not policy.applies_to(report.platform):
+                continue
+
             try:
                 passed, evidence = _evaluate_condition(
                     policy.condition, pipeline, report
