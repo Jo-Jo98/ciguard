@@ -71,7 +71,7 @@ class GitLabCIParser:
             )
         with open(path, "r", encoding="utf-8") as fh:
             try:
-                raw = yaml.load(fh, Loader=_GitLabSafeLoader)  # SafeLoader subclass; GitLab !reference handled
+                raw = yaml.load(fh, Loader=_GitLabSafeLoader)  # nosec B506 - _GitLabSafeLoader is a SafeLoader subclass with a single registered constructor for GitLab's `!reference` tag; no arbitrary object instantiation
             except yaml.YAMLError as exc:
                 raise ValueError(f"Invalid YAML: {exc}") from exc
         if not isinstance(raw, dict):

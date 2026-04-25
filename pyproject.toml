@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ciguard"
-version = "0.1.3"
+version = "0.1.4"
 description = "Static security auditor for CI/CD pipelines (GitLab CI today; GitHub Actions + Jenkins in development)."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Jo-Jo98" }]
 keywords = ["ci", "cd", "security", "sast", "gitlab", "audit", "compliance"]
@@ -20,10 +20,10 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Security",
     "Topic :: Software Development :: Quality Assurance",
 ]
@@ -69,7 +69,7 @@ python_files = ["test_*.py"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint.per-file-ignores]
 # Validation scripts insert src/ onto sys.path before importing the package,

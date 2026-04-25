@@ -148,4 +148,4 @@ def ui_report(request: Request, scan_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("src.web.app:app", host="0.0.0.0", port=8080, reload=True)
+    uvicorn.run("src.web.app:app", host="0.0.0.0", port=8080, reload=True)  # nosec B104 - dev-only entrypoint; container deployments override host via uvicorn CLI

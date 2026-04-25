@@ -62,3 +62,30 @@ jobs:
           # ('no matching manifest for linux/arm64'). Multi-arch added 2026-04-25.
           platforms: linux/amd64,linux/arm64
           tags: ghcr.io/${{ steps.tag.outputs.repo }}:${{ steps.tag.outputs.tag }}${{ steps.tag.outputs.extra }}
+
+  trivy:
+    name: Trivy scan published image
+    runs-on: ubuntu-latest
+    needs: ghcr
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Compute image ref (GHCR requires lowercase)
+        id: tag
+        run: |
+          REPO_LC="${GITHUB_REPOSITORY,,}"
+          TAG="${{ github.ref_name }}"
+          echo "image=ghcr.io/${REPO_LC}:${TAG}" >> $GITHUB_OUTPUT
+      # Trivy pulls the image we just published and reports OS-package + Python
+      # CVEs at HIGH/CRITICAL. Failing here surfaces a release that ships
+      # known-bad packages — Dependabot's docker base-image PRs are how we keep
+      # the floor current between releases. `ignore-unfixed: true` skips
+      # vulnerabilities with no upstream fix yet (we cannot act on them).
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8  # v0.36.0
+        with:
+          image-ref: ${{ steps.tag.outputs.image }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"

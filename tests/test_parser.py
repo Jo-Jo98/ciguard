@@ -379,7 +379,9 @@ class TestIncludeOnlyPipeline:
     files — so they must not fire."""
 
     def setup_method(self):
-        import textwrap, tempfile, os
+        import os
+        import tempfile
+        import textwrap
         yaml = textwrap.dedent("""
             stages: [build, test, publish]
             include:
@@ -387,7 +389,8 @@ class TestIncludeOnlyPipeline:
               - local: '.gitlab/ci/test.gitlab-ci.yml'
         """)
         fd, path = tempfile.mkstemp(suffix=".yml")
-        os.write(fd, yaml.encode()); os.close(fd)
+        os.write(fd, yaml.encode())
+        os.close(fd)
         try:
             p = parser.parse_file(path)
             self.pipeline = p

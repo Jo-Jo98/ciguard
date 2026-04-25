@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
@@ -36,3 +36,32 @@ jobs:
           python-version: "3.12"
       - run: pip install ruff
       - run: ruff check src tests scripts
+
+  bandit:
+    name: Bandit (SAST)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.12"
+      - run: pip install bandit
+      # Fail on Medium+ severity. The 4 Lows in src/ciguard/scanners/* are
+      # subprocess imports used to invoke Semgrep / Scorecard — flagged
+      # simply for importing subprocess, not for unsafe usage (shell=False
+      # everywhere, fully-qualified paths via shutil.which).
+      - run: bandit -r src/ --severity-level medium --confidence-level medium
+
+  pip-audit:
+    name: pip-audit (dependency CVEs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.12"
+      - run: pip install pip-audit
+      # Audit declared deps in requirements.txt directly. Auditing an installed
+      # venv breaks the first-run-on-a-new-version (pip-audit fails when
+      # ciguard itself is not yet on PyPI for the current dev tag).
+      - run: pip-audit --strict -r requirements.txt
