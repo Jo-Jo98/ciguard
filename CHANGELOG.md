@@ -3,6 +3,26 @@
 All notable changes to `ciguard` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] — 2026-04-25
+
+### Added
+- **SARIF 2.1.0 output format.** `ciguard scan --output report.sarif --format sarif` writes a fully-spec-compliant SARIF document. Uploading via `github/codeql-action/upload-sarif` surfaces findings in the GitHub **Security → Code scanning alerts** tab — same surface CodeQL uses, with PR-blocking gates available. Severity → SARIF level mapping: Critical/High → `error`, Medium → `warning`, Low/Info → `note`. Each result carries a numeric `security-severity` (9.5 / 7.5 / 5.0 / 3.0 / 0.0) so GitHub's ranking is sensible. Compliance framework refs (ISO 27001 / SOC 2 / NIST CSF) ride along on each rule's `properties.tags` so they're searchable in Code Scanning. Rule definitions are deduplicated across the run by `rule_id`.
+- **Five advanced GitHub Actions security rules** taking the GHA catalogue from 7 to 12:
+  - `GHA-PIPE-002` — **Unsafe `pull_request_target` event** (Critical). The canonical GitHub Actions RCE vector: `pull_request_target` runs in the base-repo context with write tokens, so combining it with any PR-author-derived input is dangerous.
+  - `GHA-IAM-005` — **No `permissions:` block declared** (High). Workflow inherits the repository default which is frequently more permissive than needed; explicit declaration is reviewable.
+  - `GHA-IAM-006` — **Token-theft risk in `pull_request_target` workflow** (Critical). `actions/checkout` without `persist-credentials: false` writes the GITHUB_TOKEN into `.git/config`; combined with `pull_request_target` this is a classic PR-author-RCE vector.
+  - `GHA-RUN-003` — **Self-hosted runner without narrowing labels** (Medium). Bare `runs-on: self-hosted` accepts any repository workflow, including fork PRs, onto shared hardware.
+  - `GHA-SC-003` — **`secrets: inherit` to non-SHA-pinned reusable workflow** (Critical). Forwards every repo secret to the callee; if the `uses:` ref is mutable, an upstream compromise replaces the implementation between runs and exfiltrates everything.
+- New labelled fixture `tests/fixtures/github_actions/no_permissions.yml` covering `GHA-IAM-005` (which can't fire on `bad_actions.yml` because that fixture explicitly declares `permissions: write-all`).
+
+### Changed
+- `bad_actions.yml` extended with `pull_request_target` event + a bare `self-hosted` job to exercise PIPE-002 / IAM-006 / RUN-003. SC-003 was already covered by the existing `call-shared` reusable workflow with `secrets: inherit` + `@main`.
+- README + USAGE.md updated: GHA rule count 7 → 12; report format count 3 → 4 (SARIF added); roadmap reshuffled (Jenkins moves from v0.3 to v0.4; baseline / delta from v0.4 to v0.5).
+- Total deterministic security rules across both platforms: 26 → 31.
+
+### Internal
+- 22 new tests (198 → 213 passing): 7 covering the new GHA rules + fixture, 15 covering SARIF output shape, severity mapping, rule deduplication, compliance tags, and edge cases (empty report, Critical → `error` mapping with `security-severity = 9.5`).
+
 ## [0.2.1] — 2026-04-25
 
 ### Added

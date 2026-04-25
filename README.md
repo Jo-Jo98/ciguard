@@ -46,6 +46,9 @@ ciguard scan --input .gitlab-ci.yml --output report.json --format json
 # PDF report (audits, executive review)
 ciguard scan --input .gitlab-ci.yml --output report.pdf --format pdf
 
+# SARIF report (uploads to GitHub Code Scanning → Security tab)
+ciguard scan --input .github/workflows/release.yml --output ciguard.sarif --format sarif
+
 # Apply organisational policies
 ciguard scan --input .gitlab-ci.yml --policies policies/ --output report.html
 
@@ -60,13 +63,13 @@ Exit codes: `0` clean, `2` critical findings, `1` error.
 
 ## Features
 
-- **Two platforms** — GitLab CI (19 rules) and GitHub Actions (7 rules covering supply-chain, IAM, runner, deploy-governance). Format auto-detected from the YAML; `--platform` override available.
-- **26 deterministic security rules** across 6 categories
+- **Two platforms** — GitLab CI (19 rules) and GitHub Actions (12 rules covering supply-chain, IAM, runner, deploy-governance, plus advanced GHA-specific risks: `pull_request_target` misuse, token-theft windows, `secrets: inherit` to unpinned reusable workflows, bare self-hosted runners). Format auto-detected from the YAML; `--platform` override available.
+- **31 deterministic security rules** across 6 categories
   (Pipeline Integrity, Identity & Access, Runner Security, Artifact Handling, Deployment Governance, Supply Chain)
 - **Policy engine** — 7 built-in organisational policies + custom YAML policies (built-ins are GitLab-specific in v0.2; GHA-aware built-ins on the v0.2.x roadmap)
 - **Scanner integrations** — Semgrep CE, OpenSSF Scorecard, GitLab native security artifacts (all optional, graceful when unavailable)
 - **AI enrichment** — optional Claude / OpenAI executive summaries and remediation plans
-- **Three report formats** — HTML (dark, self-contained, no CDN), JSON (API-ready), PDF (8 sections, audit-grade)
+- **Four report formats** — HTML (dark, self-contained, no CDN), JSON (API-ready), PDF (8 sections, audit-grade), SARIF 2.1.0 (uploads to GitHub Code Scanning → Security tab)
 - **Web UI** — drag-and-drop upload, live results, downloadable reports
 - **REST API** — FastAPI with OpenAPI docs at `/api/docs`
 - **Risk scoring** — weighted A–F grade with per-category breakdown
@@ -135,10 +138,10 @@ docker compose run --rm cli --input /pipeline/.gitlab-ci.yml --output /reports/r
 ## Roadmap
 
 - **v0.1** — GitLab CI parser, 19 rules, policy engine, scanner integrations, HTML/JSON/PDF reports, AI enrichment, web UI
-- **v0.2** — GitHub Actions parser + 7 GHA rules (`uses` SHA pinning, `permissions: write-all`, hardcoded env secrets, privileged services, deploy-without-environment, dangerous shell, unpinned containers)
-- **v0.2.x** — GHA-aware built-in policies, additional GHA rules (matrix-aware checks, reusable-workflow trust)
-- **v0.3** — Jenkins (Declarative Pipeline only) + SARIF output
-- **v0.4** — Baseline / delta reports, GitHub Actions Marketplace listing
+- **v0.2** — GitHub Actions parser + 7 GHA rules (`uses` SHA pinning, `permissions: write-all`, hardcoded env secrets, privileged services, deploy-without-environment, dangerous shell, unpinned containers) + GHA-aware built-in policies (v0.2.1)
+- **v0.3** — SARIF 2.1.0 output + 5 advanced GHA rules (`pull_request_target` safety, token-theft detection, `secrets: inherit` trust, self-hosted runner hygiene, missing `permissions:` block)
+- **v0.4** — Jenkins (Declarative Pipeline only)
+- **v0.5** — Baseline / delta reports, GitHub Actions Marketplace listing
 
 See [PRD.md](PRD.md) for the full reconciled scope and current task list.
 

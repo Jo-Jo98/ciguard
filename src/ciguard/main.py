@@ -208,9 +208,13 @@ def cmd_scan(args: argparse.Namespace) -> int:
         from ciguard.reporter.json_report import JSONReporter
         JSONReporter().write(report, output_path)
         print(f"{_GREEN}OK{_RESET}  → {output_path}")
+    elif suffix == ".sarif" or fmt == "sarif":
+        from ciguard.reporter.sarif_report import SARIFReporter
+        SARIFReporter().write(report, output_path)
+        print(f"{_GREEN}OK{_RESET}  → {output_path}")
     else:
         print(f"{_RED}FAILED{_RESET}")
-        print(f"  Unknown format {suffix!r}. Use .html, .json, or .pdf", file=sys.stderr)
+        print(f"  Unknown format {suffix!r}. Use .html, .json, .pdf, or .sarif", file=sys.stderr)
         return 1
 
     _print_terminal_report(report)
@@ -310,8 +314,8 @@ def main() -> int:
         help="Output path for the report (.html, .json, or .pdf)."
     )
     scan_parser.add_argument(
-        "--format", "-f", default=None, choices=["html", "json", "pdf"],
-        help="Output format override (html, json, pdf).",
+        "--format", "-f", default=None, choices=["html", "json", "pdf", "sarif"],
+        help="Output format override (html, json, pdf, sarif).",
     )
     scan_parser.add_argument(
         "--platform", "-p", default="auto",

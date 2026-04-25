@@ -6,7 +6,14 @@
 
 name: deploy-prod
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  # GHA-PIPE-002: pull_request_target runs in the base-repo context with
+  # write tokens. Combined with the unprotected actions/checkout below
+  # (no `persist-credentials: false`), this is also a token-theft vector
+  # and triggers GHA-IAM-006.
+  pull_request_target:
 
 # Excessive default permissions — every job inherits write-all on every scope.
 permissions: write-all
@@ -58,6 +65,13 @@ jobs:
           ./deploy.sh production
 
   # Reusable workflow call without a SHA-pinned ref.
+  # `secrets: inherit` + non-SHA ref → triggers GHA-SC-002 *and* GHA-SC-003.
   call-shared:
     uses: example-org/shared-workflows/.github/workflows/release.yml@main
     secrets: inherit
+
+  # Bare self-hosted label — triggers GHA-RUN-003.
+  smoke-on-self-hosted:
+    runs-on: self-hosted
+    steps:
+      - run: echo smoke

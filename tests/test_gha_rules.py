@@ -40,11 +40,11 @@ class TestBadActionsFiring:
 
     def test_workflow_attached_to_report(self):
         assert self.report.workflow is not None
-        assert len(self.report.workflow.jobs) == 4
+        assert len(self.report.workflow.jobs) == 5
 
     def test_synthetic_pipeline_for_reporters(self):
         # Reporters/web read `report.pipeline.jobs` — must be populated.
-        assert len(self.report.pipeline.jobs) == 4
+        assert len(self.report.pipeline.jobs) == 5
 
     def test_pipe_001_fires_on_unpinned_container(self):
         # `node:latest` on the test job
@@ -73,20 +73,46 @@ class TestBadActionsFiring:
         # `actions/checkout@v4`, `setup-node@v4`, reusable workflow @main
         assert "GHA-SC-002" in self.fired
 
-    def test_all_seven_gha_rules_fire(self):
+    def test_all_twelve_gha_rules_fire(self):
         # Stronger collective check — easier to spot regressions if a single
         # rule silently stops firing.
         expected = {
             "GHA-PIPE-001",
+            "GHA-PIPE-002",
             "GHA-IAM-001",
             "GHA-IAM-004",
+            "GHA-IAM-006",
             "GHA-RUN-002",
+            "GHA-RUN-003",
             "GHA-DEP-001",
             "GHA-SC-001",
             "GHA-SC-002",
+            "GHA-SC-003",
         }
+        # GHA-IAM-005 is excluded — bad_actions.yml has `permissions: write-all`
+        # declared, so the "no permissions" rule cannot fire (covered by the
+        # no_permissions.yml fixture below).
         missing = expected - self.fired
         assert not missing, f"GHA rules failed to fire: {missing}"
+
+    def test_pipe_002_fires_once_for_pull_request_target(self):
+        pipe_002 = [f for f in self.report.findings if f.rule_id == "GHA-PIPE-002"]
+        assert len(pipe_002) == 1
+
+    def test_iam_006_fires_once_per_unprotected_checkout(self):
+        # build, test, deploy_prod each have an unprotected checkout
+        iam_006 = [f for f in self.report.findings if f.rule_id == "GHA-IAM-006"]
+        assert len(iam_006) >= 3
+
+    def test_run_003_fires_on_bare_self_hosted(self):
+        run_003 = [f for f in self.report.findings if f.rule_id == "GHA-RUN-003"]
+        assert len(run_003) == 1
+        assert "smoke-on-self-hosted" in run_003[0].location
+
+    def test_sc_003_fires_on_inherit_secrets_unpinned_workflow(self):
+        sc_003 = [f for f in self.report.findings if f.rule_id == "GHA-SC-003"]
+        assert len(sc_003) == 1
+        assert "call-shared" in sc_003[0].location
 
     def test_grade_is_d_or_f(self):
         assert self.report.risk_score.grade in ("D", "F")
@@ -144,4 +170,28 @@ class TestEngineDispatch:
             )
 
     def test_gha_rules_registry_count(self):
-        assert len(GHA_RULES) == 7
+        assert len(GHA_RULES) == 12
+
+
+# ---------------------------------------------------------------------------
+# IAM-005 has its own fixture because bad_actions.yml has `permissions: write-all`
+# declared, so the "no permissions block declared" rule cannot fire there.
+# ---------------------------------------------------------------------------
+
+class TestNoPermissionsFixture:
+    def setup_method(self):
+        wf = parser.parse_file(FIXTURES / "no_permissions.yml")
+        self.report = engine.analyse(wf, pipeline_name="no_permissions.yml")
+
+    def test_iam_005_fires_when_no_permissions_anywhere(self):
+        ids = [f.rule_id for f in self.report.findings]
+        assert "GHA-IAM-005" in ids
+
+    def test_iam_005_only_finding(self):
+        # The fixture is otherwise clean — we only expect GHA-IAM-005.
+        ids = {f.rule_id for f in self.report.findings}
+        assert ids == {"GHA-IAM-005"}, f"Unexpected findings: {ids}"
+
+    def test_grade_still_a(self):
+        # Single High finding doesn't drop to D
+        assert self.report.risk_score.grade == "A"

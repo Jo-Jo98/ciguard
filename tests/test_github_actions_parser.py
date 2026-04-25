@@ -59,7 +59,7 @@ class TestBadActionsFixture:
 
     def test_jobs_count(self):
         # build / test / deploy_prod / call-shared
-        assert len(self.wf.jobs) == 4
+        assert len(self.wf.jobs) == 5
 
     def test_uses_refs_collected(self):
         refs = self.wf.all_action_uses()

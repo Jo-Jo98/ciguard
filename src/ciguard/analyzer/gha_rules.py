@@ -472,15 +472,316 @@ def rule_gha_sc_002(wf: Workflow) -> List[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# GHA-PIPE-002 — pull_request_target without explicit gating
+# ---------------------------------------------------------------------------
+
+def rule_gha_pipe_002(wf: Workflow) -> List[Finding]:
+    """GHA-PIPE-002: workflow uses `pull_request_target` event with no gate.
+
+    `pull_request_target` runs in the context of the *base* repo (not the
+    forked PR head) — meaning it has write access to the repo's secrets and
+    GITHUB_TOKEN. Combined with `actions/checkout` of the PR head (or any
+    other PR-author-influenced inputs), it is the canonical GitHub Actions
+    RCE vector. GitHub itself has published guidance recommending this
+    event be used "with extreme caution".
+
+    A scan that finds `pull_request_target` *and* no per-job `if:` filter
+    that locks the workflow to trusted contexts is reported as Critical.
+    """
+    findings: List[Finding] = []
+    compliance = ComplianceMapping(
+        iso_27001=["A.9.4.4", "A.14.2.5"],
+        soc2=["CC6.1", "CC6.6"],
+        nist=["PR.AC-4", "PR.IP-1"],
+    )
+
+    if not wf.has_event("pull_request_target"):
+        return findings
+
+    # If every job has an `if:` filter that gates on something other than
+    # `github.event_name`, the developer is at least aware of the risk.
+    # We still report — GitHub's own recommendation is "avoid where possible"
+    # — but note presence of guards in the description.
+    has_any_guard = any(job.if_condition for job in wf.jobs)
+
+    findings.append(Finding(
+        id=_finding_id("GHA-PIPE-002"),
+        rule_id="GHA-PIPE-002",
+        name="Unsafe pull_request_target Event",
+        description=(
+            "Workflow triggers on `pull_request_target`, which runs in the "
+            "context of the base repository with full write access to secrets "
+            "and GITHUB_TOKEN. If the workflow checks out the PR head or "
+            "executes any code derived from the PR, an attacker who opens a "
+            "fork PR can gain RCE on the runner with the base repo's "
+            "credentials. " +
+            ("Per-job `if:` guards detected — review carefully." if has_any_guard
+             else "No per-job `if:` guards detected.")
+        ),
+        severity=Severity.CRITICAL,
+        category=Category.PIPELINE_INTEGRITY,
+        location="on.pull_request_target",
+        evidence="on: contains pull_request_target",
+        remediation=(
+            "Strongly prefer `pull_request` (which runs in the PR's fork "
+            "context with read-only token). If `pull_request_target` is "
+            "essential, gate every job with an explicit `if:` that confirms "
+            "the PR is from a trusted source, never check out the PR head, "
+            "and treat any PR-derived input as untrusted. See GitHub's "
+            "'Keeping your GitHub Actions secure' guidance."
+        ),
+        compliance=compliance,
+    ))
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# GHA-IAM-005 — No `permissions:` declared anywhere
+# ---------------------------------------------------------------------------
+
+def rule_gha_iam_005(wf: Workflow) -> List[Finding]:
+    """GHA-IAM-005: neither workflow nor any job declares `permissions:`.
+
+    Without an explicit block, the workflow inherits the repository default,
+    which historically is permissive. GitHub's recommendation is to declare
+    least-privilege permissions explicitly so the GITHUB_TOKEN's scope is
+    obvious in the YAML and reviewable in code review.
+    """
+    findings: List[Finding] = []
+    compliance = ComplianceMapping(
+        iso_27001=["A.9.2.3", "A.9.4.1"],
+        soc2=["CC6.1", "CC6.3"],
+        nist=["PR.AC-4", "PR.AC-6"],
+    )
+
+    workflow_has = wf.permissions is not None
+    any_job_has = any(job.permissions is not None for job in wf.jobs)
+
+    if not workflow_has and not any_job_has:
+        findings.append(Finding(
+            id=_finding_id("GHA-IAM-005"),
+            rule_id="GHA-IAM-005",
+            name="No Permissions Block Declared",
+            description=(
+                "No `permissions:` block is declared at the workflow or any "
+                "job level. The workflow runs with the repository's default "
+                "GITHUB_TOKEN scope, which depends on org settings and is "
+                "frequently more permissive than the workflow needs. "
+                "Explicit declaration is reviewable in code review; the "
+                "repository default is not."
+            ),
+            severity=Severity.HIGH,
+            category=Category.IDENTITY_ACCESS,
+            location="permissions",
+            evidence="no permissions: block at workflow or job level",
+            remediation=(
+                "Declare an explicit least-privilege block at workflow level:\n"
+                "  permissions:\n"
+                "    contents: read\n"
+                "Elevate per-job only where strictly required."
+            ),
+            compliance=compliance,
+        ))
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# GHA-IAM-006 — pull_request_target + checkout without persist-credentials:false
+# ---------------------------------------------------------------------------
+
+def rule_gha_iam_006(wf: Workflow) -> List[Finding]:
+    """GHA-IAM-006: pull_request_target workflow uses `actions/checkout`
+    without setting `persist-credentials: false`.
+
+    The default for `actions/checkout` is to persist the auto-generated
+    GITHUB_TOKEN into the local git config so subsequent steps can push.
+    Combined with `pull_request_target` (which has write tokens) and any
+    PR-author-influenced step (e.g. running `npm install` whose lockfile
+    came from the PR), this is a classic token-theft vector.
+    """
+    findings: List[Finding] = []
+    compliance = ComplianceMapping(
+        iso_27001=["A.9.4.3", "A.14.2.5"],
+        soc2=["CC6.1", "CC6.7"],
+        nist=["PR.AC-1", "PR.DS-5"],
+    )
+
+    if not wf.has_event("pull_request_target"):
+        return findings
+
+    for job in wf.jobs:
+        for i, step in enumerate(job.steps):
+            if not step.uses or "actions/checkout" not in step.uses:
+                continue
+            persist = step.with_inputs.get("persist-credentials")
+            # `False` (Python bool from YAML), `"false"`, or `"False"` are all OK.
+            if persist is False or str(persist).lower() == "false":
+                continue
+            findings.append(Finding(
+                id=_finding_id("GHA-IAM-006"),
+                rule_id="GHA-IAM-006",
+                name="Token-Theft Risk in pull_request_target Workflow",
+                description=(
+                    f"`actions/checkout` in job `{job.id}` runs in a "
+                    "`pull_request_target` workflow but does not set "
+                    "`persist-credentials: false`. The default behaviour writes "
+                    "the GITHUB_TOKEN into `.git/config`; any later step that "
+                    "executes PR-author-derived code (build scripts, lockfile "
+                    "installs, custom scripts) can read it."
+                ),
+                severity=Severity.CRITICAL,
+                category=Category.IDENTITY_ACCESS,
+                location=f"jobs.{job.id}.steps[{i}]",
+                evidence=f"uses: {step.uses} (persist-credentials not false)",
+                remediation=(
+                    "Add `with: { persist-credentials: false }` to the checkout "
+                    "step. If you need push access later, use a narrow PAT or "
+                    "GitHub App token explicitly, never the auto-injected "
+                    "GITHUB_TOKEN credential."
+                ),
+                compliance=compliance,
+            ))
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# GHA-RUN-003 — `runs-on: self-hosted` without specific labels
+# ---------------------------------------------------------------------------
+
+def rule_gha_run_003(wf: Workflow) -> List[Finding]:
+    """GHA-RUN-003: bare `runs-on: self-hosted` (or list with no narrowing label).
+
+    Self-hosted runners with no narrowing labels accept any job in the
+    repository (or, with default settings, the org). Public-fork PRs targeting
+    the repo can land jobs on the same physical hardware as production builds,
+    enabling cross-job data theft. GitHub explicitly recommends narrowing.
+    """
+    findings: List[Finding] = []
+    compliance = ComplianceMapping(
+        iso_27001=["A.13.1.3", "A.14.2.5"],
+        soc2=["CC6.6", "CC7.1"],
+        nist=["PR.PT-3", "PR.AC-4"],
+    )
+
+    for job in wf.jobs:
+        labels: List[str] = []
+        if isinstance(job.runs_on, str):
+            labels = [job.runs_on]
+        elif isinstance(job.runs_on, list):
+            labels = [str(x) for x in job.runs_on]
+
+        if "self-hosted" not in labels:
+            continue
+        # Anything more specific than [self-hosted] alone is acceptable here.
+        generic = ("self-hosted", "Linux", "macOS", "Windows", "X64", "ARM64", "ARM")
+        narrowing_labels = [lbl for lbl in labels if lbl not in generic]
+        if narrowing_labels:
+            continue
+
+        findings.append(Finding(
+            id=_finding_id("GHA-RUN-003"),
+            rule_id="GHA-RUN-003",
+            name="Self-Hosted Runner Without Narrowing Labels",
+            description=(
+                f"Job `{job.id}` targets `runs-on: self-hosted` with no "
+                "narrowing labels. Any repository workflow — including PRs "
+                "from forks — can be scheduled onto your shared runner pool, "
+                "enabling cross-job data theft and persistence on the runner."
+            ),
+            severity=Severity.MEDIUM,
+            category=Category.RUNNER_SECURITY,
+            location=f"jobs.{job.id}.runs-on",
+            evidence=f"runs-on: {labels}",
+            remediation=(
+                "Add a narrowing label that restricts the runner pool to a "
+                "specific tier, e.g. `[self-hosted, prod-build, isolated]`. "
+                "Disable workflow-from-fork-PR runs on self-hosted runners "
+                "in repo Settings > Actions > General."
+            ),
+            compliance=compliance,
+        ))
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# GHA-SC-003 — secrets: inherit to non-SHA-pinned reusable workflow
+# ---------------------------------------------------------------------------
+
+def rule_gha_sc_003(wf: Workflow) -> List[Finding]:
+    """GHA-SC-003: reusable-workflow call uses `secrets: inherit` *and* the
+    `uses:` reference is not SHA-pinned.
+
+    `secrets: inherit` forwards every secret in the calling repo to the
+    callee. If the callee's `uses:` ref is mutable (a tag or branch), an
+    upstream maintainer compromise hands all those secrets to the attacker
+    on the next workflow run. SHA pinning is the standard mitigation.
+    """
+    findings: List[Finding] = []
+    compliance = ComplianceMapping(
+        iso_27001=["A.9.4.3", "A.12.5.1"],
+        soc2=["CC6.1", "CC6.6"],
+        nist=["ID.SC-3", "PR.IP-2"],
+    )
+
+    sha_re = re.compile(r"^[0-9a-f]{40}$", re.I)
+
+    for job in wf.jobs:
+        if not job.uses or job.secrets != "inherit":
+            continue
+        if "@" in job.uses:
+            ref = job.uses.rsplit("@", 1)[1]
+            if sha_re.match(ref):
+                continue
+            tag = ref
+        else:
+            tag = "default-branch"
+
+        findings.append(Finding(
+            id=_finding_id("GHA-SC-003"),
+            rule_id="GHA-SC-003",
+            name="secrets: inherit on Unpinned Reusable Workflow",
+            description=(
+                f"Job `{job.id}` calls reusable workflow `{job.uses}` with "
+                "`secrets: inherit` — every secret in this repository is "
+                f"forwarded to the callee. The ref `{tag}` is mutable, so "
+                "an upstream compromise can replace the callee's "
+                "implementation between runs and exfiltrate every secret."
+            ),
+            severity=Severity.CRITICAL,
+            category=Category.SUPPLY_CHAIN,
+            location=f"jobs.{job.id}",
+            evidence=f"uses: {job.uses}, secrets: inherit",
+            remediation=(
+                "Either pin the `uses:` ref to a 40-character commit SHA, or "
+                "stop using `secrets: inherit` and forward only the specific "
+                "secrets the callee actually needs (`secrets:\\n  TOKEN: "
+                "${{ secrets.NPM_TOKEN }}`)."
+            ),
+            compliance=compliance,
+        ))
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
 GHA_RULES: List[GHARuleFunc] = [
     rule_gha_pipe_001,
+    rule_gha_pipe_002,
     rule_gha_iam_001,
     rule_gha_iam_004,
+    rule_gha_iam_005,
+    rule_gha_iam_006,
     rule_gha_run_002,
+    rule_gha_run_003,
     rule_gha_dep_001,
     rule_gha_sc_001,
     rule_gha_sc_002,
+    rule_gha_sc_003,
 ]

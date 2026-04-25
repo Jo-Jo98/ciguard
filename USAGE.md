@@ -31,7 +31,7 @@ Three things every time you run a scan:
 2. **A list of specific findings** — each one with a rule ID, severity, location (file + job), evidence, and concrete remediation. Not "you have a vulnerability"; "line 14 of `deploy_prod` runs `curl | bash` against an unpinned URL — replace with a checksummed installer."
 3. **Compliance mapping on every finding** — ISO 27001, SOC 2, NIST CSF references. This is the part that turns a security tool into an audit deliverable. Auditors recognise the control IDs; engineers don't have to translate.
 
-Output formats: **terminal summary, HTML report, JSON (for CI/API), PDF (for auditors and execs)**.
+Output formats: **terminal summary, HTML report, JSON (for CI/API), PDF (for auditors and execs), SARIF 2.1.0 (for GitHub Code Scanning)**.
 
 ```bash
 # What this looks like:
@@ -167,6 +167,44 @@ A typical first-scan failure on an existing repo is `GHA-SC-002` (action
 references not pinned to a 40-char commit SHA). Dependabot can keep those
 SHAs current automatically — see [SECURITY.md](SECURITY.md) for ciguard's
 own setup.
+
+### 3a. GitHub Actions gate with SARIF (Security tab integration)
+
+To make ciguard findings appear natively in the **GitHub Security tab** —
+the same surface CodeQL writes to — emit a SARIF file and upload it:
+
+```yaml
+# .github/workflows/ciguard.yml
+name: ciguard
+on: [pull_request, push]
+
+permissions:
+  contents: read
+  security-events: write    # required for SARIF upload
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install ciguard
+      - name: ciguard scan
+        run: ciguard scan --input .github/workflows/release.yml --output ciguard.sarif --format sarif
+        # Don't fail the workflow here; let SARIF upload always run.
+        continue-on-error: true
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: ciguard.sarif
+          category: ciguard
+```
+
+Findings now show up in **Security → Code scanning alerts**, ranked by the
+SARIF `security-severity` score (Critical = 9.5, High = 7.5, etc.). PR
+review can require these alerts be resolved — same gating mechanism CodeQL
+uses.
 
 ### 4. Container-only — no Python install needed
 
