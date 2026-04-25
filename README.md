@@ -6,8 +6,8 @@
 
 Static security auditor for CI/CD pipelines. Scans pipeline configuration files for misconfigurations, supply-chain risks, and compliance gaps. Produces prioritised reports with mappings to ISO 27001, SOC 2, and NIST CSF.
 
-**Supported today:** GitLab CI (`.gitlab-ci.yml`)
-**In development:** GitHub Actions, Jenkins (Declarative Pipeline), SARIF output
+**Supported today:** GitLab CI (`.gitlab-ci.yml`) and GitHub Actions (`.github/workflows/*.yml`)
+**In development:** Jenkins (Declarative Pipeline), SARIF output
 
 > **New to ciguard?** [USAGE.md](USAGE.md) is a practical walkthrough — who benefits, five-minute integrations for GitLab CI / GitHub Actions / Docker, organisational policy patterns, and what the audit-grade reports actually contain.
 
@@ -49,6 +49,9 @@ ciguard scan --input .gitlab-ci.yml --output report.pdf --format pdf
 # Apply organisational policies
 ciguard scan --input .gitlab-ci.yml --policies policies/ --output report.html
 
+# Scan a GitHub Actions workflow (auto-detected; --platform overrides)
+ciguard scan --input .github/workflows/release.yml --output report.html
+
 # AI-enriched executive summary (optional, requires API key)
 ANTHROPIC_API_KEY=sk-ant-... ciguard scan --input .gitlab-ci.yml --llm --output report.html
 ```
@@ -57,9 +60,10 @@ Exit codes: `0` clean, `2` critical findings, `1` error.
 
 ## Features
 
-- **19 deterministic security rules** across 6 categories
+- **Two platforms** — GitLab CI (19 rules) and GitHub Actions (7 rules covering supply-chain, IAM, runner, deploy-governance). Format auto-detected from the YAML; `--platform` override available.
+- **26 deterministic security rules** across 6 categories
   (Pipeline Integrity, Identity & Access, Runner Security, Artifact Handling, Deployment Governance, Supply Chain)
-- **Policy engine** — 7 built-in organisational policies + custom YAML policies
+- **Policy engine** — 7 built-in organisational policies + custom YAML policies (built-ins are GitLab-specific in v0.2; GHA-aware built-ins on the v0.2.x roadmap)
 - **Scanner integrations** — Semgrep CE, OpenSSF Scorecard, GitLab native security artifacts (all optional, graceful when unavailable)
 - **AI enrichment** — optional Claude / OpenAI executive summaries and remediation plans
 - **Three report formats** — HTML (dark, self-contained, no CDN), JSON (API-ready), PDF (8 sections, audit-grade)
@@ -131,7 +135,8 @@ docker compose run --rm cli --input /pipeline/.gitlab-ci.yml --output /reports/r
 ## Roadmap
 
 - **v0.1** — GitLab CI parser, 19 rules, policy engine, scanner integrations, HTML/JSON/PDF reports, AI enrichment, web UI
-- **v0.2** — GitHub Actions parser
+- **v0.2** — GitHub Actions parser + 7 GHA rules (`uses` SHA pinning, `permissions: write-all`, hardcoded env secrets, privileged services, deploy-without-environment, dangerous shell, unpinned containers)
+- **v0.2.x** — GHA-aware built-in policies, additional GHA rules (matrix-aware checks, reusable-workflow trust)
 - **v0.3** — Jenkins (Declarative Pipeline only) + SARIF output
 - **v0.4** — Baseline / delta reports, GitHub Actions Marketplace listing
 

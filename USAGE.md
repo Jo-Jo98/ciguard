@@ -131,7 +131,10 @@ ciguard:
 
 Critical findings → exit 2 → job fails → MR blocked. The HTML lives as a downloadable artifact for reviewers.
 
-### 3. GitHub Actions gate
+### 3. GitHub Actions gate (scans the workflow itself)
+
+`ciguard` 0.2 supports GitHub Actions workflows directly — point it at any
+`.github/workflows/*.yml` file:
 
 ```yaml
 # .github/workflows/ciguard.yml
@@ -146,7 +149,10 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install ciguard
-      - run: ciguard scan --input .gitlab-ci.yml --output report.html
+      # Scan any GitLab CI or GHA workflow file in the repo. ciguard
+      # auto-detects the platform from the YAML shape; pass --platform
+      # gitlab-ci or github-actions to override.
+      - run: ciguard scan --input .github/workflows/release.yml --output report.html
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -154,7 +160,13 @@ jobs:
           path: report.html
 ```
 
-(GitHub Actions parser is on the roadmap — for now, this works for repos that contain GitLab CI files, e.g. mirrored mono-repos.)
+Critical findings → exit 2 → step fails → PR blocked. The HTML lives as a
+downloadable artifact for reviewers.
+
+A typical first-scan failure on an existing repo is `GHA-SC-002` (action
+references not pinned to a 40-char commit SHA). Dependabot can keep those
+SHAs current automatically — see [SECURITY.md](SECURITY.md) for ciguard's
+own setup.
 
 ### 4. Container-only — no Python install needed
 
@@ -209,7 +221,7 @@ Honest scoping helps:
 - **Not a runtime tool.** `ciguard` reads YAML — it does not observe your runners, monitor traffic, or scan running containers. Pair it with a runtime tool (Falco, Datadog) for full coverage.
 - **Not an application SAST tool.** Bandit, Semgrep, and friends scan your application code. `ciguard` scans the *pipeline configuration that builds and deploys your application*. They are complementary, not alternatives.
 - **Not a secret rotator.** It detects hardcoded secrets, names them, and tells you to remove them. Rotation is on you (or your secret manager).
-- **GitLab CI today.** GitHub Actions, Jenkins (Declarative), and SARIF output are scoped for v0.2 / v0.3. For non-GitLab pipelines today, use the web UI / Docker container against any GitLab CI files you have, and watch the roadmap.
+- **GitLab CI and GitHub Actions today.** Jenkins (Declarative) and SARIF output are scoped for v0.3. The two supported platforms have different rule depth: GitLab CI ships 19 rules + 7 built-in policies, GitHub Actions ships 7 rules (the highest-value supply-chain / IAM / runner / deploy-governance checks); GHA-specific built-in policies and additional matrix-aware rules are on the v0.2.x roadmap.
 
 ---
 

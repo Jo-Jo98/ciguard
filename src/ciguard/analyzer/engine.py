@@ -8,14 +8,19 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Dict, List
 
+from typing import Union
+
 from ..models.pipeline import (
     Category,
     Finding,
+    Job as PipelineJob,
     Pipeline,
     Report,
     RiskScore,
     Severity,
 )
+from ..models.workflow import Workflow
+from .gha_rules import GHA_RULES
 from .rules import RULES, _reset_counters
 
 # ---------------------------------------------------------------------------
@@ -49,9 +54,23 @@ _CATEGORY_MAP: Dict[Category, str] = {
 
 
 class AnalysisEngine:
-    """Runs security rules against a Pipeline and returns a Report."""
+    """Runs security rules against a Pipeline (GitLab CI) or a Workflow
+    (GitHub Actions) and returns a unified `Report`."""
 
-    def analyse(self, pipeline: Pipeline, pipeline_name: str = "pipeline") -> Report:
+    def analyse(
+        self,
+        target: Union[Pipeline, Workflow],
+        pipeline_name: str = "pipeline",
+    ) -> Report:
+        if isinstance(target, Workflow):
+            return self._analyse_workflow(target, pipeline_name)
+        return self._analyse_pipeline(target, pipeline_name)
+
+    # ------------------------------------------------------------------
+    # GitLab CI path (existing)
+    # ------------------------------------------------------------------
+
+    def _analyse_pipeline(self, pipeline: Pipeline, pipeline_name: str) -> Report:
         _reset_counters()
 
         findings: List[Finding] = []
@@ -72,6 +91,43 @@ class AnalysisEngine:
             findings=findings,
             risk_score=risk_score,
             pipeline=pipeline,
+            platform="gitlab-ci",
+            summary=summary,
+        )
+
+    # ------------------------------------------------------------------
+    # GitHub Actions path (new in v0.2.0)
+    # ------------------------------------------------------------------
+
+    def _analyse_workflow(self, workflow: Workflow, pipeline_name: str) -> Report:
+        _reset_counters()
+
+        findings: List[Finding] = []
+        for rule in GHA_RULES:
+            try:
+                findings.extend(rule(workflow))
+            except Exception as exc:
+                import traceback
+                print(f"[WARN] Rule {rule.__name__} raised: {exc}\n{traceback.format_exc()}")
+
+        risk_score = self._calculate_risk(findings)
+        summary = self._build_summary(findings)
+
+        # Synthesise a minimal Pipeline shadow so the existing reporter / web
+        # layer keep showing a job count and a meaningful "Target:" line.
+        # GitHub Actions has no concept of stages, so stages stays empty.
+        synthetic = Pipeline(
+            stages=[],
+            jobs=[PipelineJob(name=j.name or j.id) for j in workflow.jobs],
+        )
+
+        return Report(
+            pipeline_name=pipeline_name,
+            findings=findings,
+            risk_score=risk_score,
+            pipeline=synthetic,
+            workflow=workflow,
+            platform="github-actions",
             summary=summary,
         )
 

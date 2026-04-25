@@ -19,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ciguard.analyzer.engine import AnalysisEngine
 from ciguard.models.pipeline import Severity
+from ciguard.models.workflow import Workflow
+from ciguard.parser.github_actions import GitHubActionsParser, detect_format
 from ciguard.parser.gitlab_parser import GitLabCIParser
 from ciguard.policy.builtin import BUILTIN_POLICIES
 from ciguard.policy.evaluator import PolicyEvaluator
@@ -64,26 +66,48 @@ def cmd_scan(args: argparse.Namespace) -> int:
     if args.policies:
         total_steps += 1
 
-    # ---- Parse
+    # ---- Parse (auto-detect platform unless --platform overrides)
     print(f"{_DIM}[{step}/{total_steps}]{_RESET} Parsing {input_path.name} ...", end=" ", flush=True)
     step += 1
     try:
-        parser = GitLabCIParser()
-        pipeline = parser.parse_file(input_path)
+        platform = args.platform
+        if platform == "auto":
+            import yaml
+            with open(input_path, "r", encoding="utf-8") as fh:
+                raw_peek = yaml.safe_load(fh)
+            platform = (
+                detect_format(raw_peek) if isinstance(raw_peek, dict) else "gitlab-ci"
+            )
+
+        if platform == "github-actions":
+            workflow = GitHubActionsParser().parse_file(input_path)
+            pipeline = None
+            target_for_summary = workflow
+        else:
+            pipeline = GitLabCIParser().parse_file(input_path)
+            workflow = None
+            target_for_summary = pipeline
     except Exception as exc:
         print(f"{_RED}FAILED{_RESET}")
         print(f"  {exc}", file=sys.stderr)
         return 1
-    print(
-        f"{_GREEN}OK{_RESET}  "
-        f"({len(pipeline.jobs)} jobs, {len(pipeline.stages)} stages)"
-    )
+
+    if isinstance(target_for_summary, Workflow):
+        print(
+            f"{_GREEN}OK{_RESET}  "
+            f"({len(workflow.jobs)} jobs, GitHub Actions workflow)"
+        )
+    else:
+        print(
+            f"{_GREEN}OK{_RESET}  "
+            f"({len(pipeline.jobs)} jobs, {len(pipeline.stages)} stages, GitLab CI)"
+        )
 
     # ---- Analyse
     print(f"{_DIM}[{step}/{total_steps}]{_RESET} Running security rules ...", end=" ", flush=True)
     step += 1
     engine = AnalysisEngine()
-    report = engine.analyse(pipeline, pipeline_name=input_path.name)
+    report = engine.analyse(target_for_summary, pipeline_name=input_path.name)
     total = report.summary["total"]
     crits = report.summary["by_severity"].get("Critical", 0)
     highs = report.summary["by_severity"].get("High", 0)
@@ -94,7 +118,13 @@ def cmd_scan(args: argparse.Namespace) -> int:
         f"{_YELLOW}{highs} High{_RESET})"
     )
 
-    # ---- Policy evaluation (optional)
+    # ---- Policy evaluation (optional). The 7 built-in policies are tuned for
+    # GitLab CI rule IDs (POL-001 references DEP-001, POL-002 references PIPE-001
+    # etc.); they don't fire on GHA-namespaced findings. For GHA scans we still
+    # run *user-supplied* policies but skip the built-ins. GHA-aware built-ins
+    # are tracked for v0.2.x.
+    is_gha = isinstance(target_for_summary, Workflow)
+    pipeline_for_policy = report.pipeline   # synthesised Pipeline for GHA path
     if args.policies:
         print(f"{_DIM}[{step}/{total_steps}]{_RESET} Evaluating policies ...", end=" ", flush=True)
         step += 1
@@ -108,9 +138,11 @@ def cmd_scan(args: argparse.Namespace) -> int:
             print(f"{_YELLOW}SKIP{_RESET}  (path not found: {policies_path})")
             custom_policies = []
 
-        all_policies = BUILTIN_POLICIES + custom_policies
+        all_policies = (
+            custom_policies if is_gha else BUILTIN_POLICIES + custom_policies
+        )
         pol_evaluator = PolicyEvaluator()
-        pol_report = pol_evaluator.evaluate(all_policies, pipeline, report)
+        pol_report = pol_evaluator.evaluate(all_policies, pipeline_for_policy, report)
         report.policy_report = pol_report
         pc = _GREEN if pol_report.failed == 0 else _RED
         print(
@@ -119,10 +151,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
             f"{pc}{pol_report.failed} failed{_RESET}, "
             f"{_GREEN}{pol_report.passed} passed{_RESET})"
         )
-    elif not args.no_builtin_policies:
-        # Always run built-in policies unless explicitly skipped
+    elif not args.no_builtin_policies and not is_gha:
+        # Built-ins for GitLab CI only (see comment above).
         pol_evaluator = PolicyEvaluator()
-        pol_report = pol_evaluator.evaluate(BUILTIN_POLICIES, pipeline, report)
+        pol_report = pol_evaluator.evaluate(BUILTIN_POLICIES, pipeline_for_policy, report)
         report.policy_report = pol_report
 
     # ---- LLM enrichment (optional)
@@ -276,7 +308,7 @@ def main() -> int:
     scan_parser = subparsers.add_parser("scan", help="Scan a pipeline file")
     scan_parser.add_argument(
         "--input", "-i", required=True,
-        help="Path to the pipeline YAML file (.gitlab-ci.yml)"
+        help="Path to the pipeline YAML file (.gitlab-ci.yml or .github/workflows/*.yml)."
     )
     scan_parser.add_argument(
         "--output", "-o", default=None,
@@ -285,6 +317,11 @@ def main() -> int:
     scan_parser.add_argument(
         "--format", "-f", default=None, choices=["html", "json", "pdf"],
         help="Output format override (html, json, pdf).",
+    )
+    scan_parser.add_argument(
+        "--platform", "-p", default="auto",
+        choices=["auto", "gitlab-ci", "github-actions"],
+        help="Pipeline platform. `auto` (default) inspects the YAML to decide.",
     )
     scan_parser.add_argument(
         "--policies", default=None,
