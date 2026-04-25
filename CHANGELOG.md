@@ -3,6 +3,38 @@
 All notable changes to `ciguard` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.0] — 2026-04-25
+
+This release closes the original PRD with the last outstanding feature: **baseline / delta reports** for incremental scanning. Teams can now seed a baseline of acknowledged findings, and subsequent scans report only what *changed* — new findings appearing, prior findings resolved — rather than re-flagging the same set of known issues every CI run.
+
+### Added
+- **Stable finding fingerprints.** Every `Finding` now exposes a `fingerprint` field — a 16-char SHA-256 hash of `rule_id + location-without-line-numbers + evidence-normalized`. Fingerprints survive cosmetic drift (line shifts, whitespace changes, evidence case differences) so the same finding is recognised across runs even when the underlying file is reformatted. Severity and category are intentionally NOT in the hash — re-tuning a rule's severity should not invalidate its baseline entries.
+- **Baseline JSON format** at `.ciguard/baseline.json` (default location, configurable via `--baseline`). Stores the full Finding payload plus metadata (`format_version`, `scanner_version`, `scan_timestamp`, `pipeline_name`, `platform`, `overall_score`, `grade`). Format version is `1`; the loader rejects future versions cleanly so users know to upgrade ciguard rather than getting silent partial behaviour.
+- **`Delta` model** on `Report.delta` — populated when a scan is run with `--baseline`. Surfaces three lists (`new`, `resolved`, `unchanged`), the score delta against baseline, and `Delta.new_at_or_above(severity)` for CI gating logic.
+- **`ciguard baseline` subcommand** — runs a scan and writes the baseline JSON without producing a full report. Use this once to seed the baseline; thereafter `ciguard scan --baseline <path>` diffs against it.
+- **`ciguard scan` flags:**
+  - `--baseline <path>` — diff against this baseline. Findings absent from the baseline appear as `new`; findings only in the baseline as `resolved`.
+  - `--update-baseline` — after the scan, write the current findings as the new baseline (acknowledges everything currently surfaced).
+  - `--fail-on-new={Critical,High,Medium,Low,Info,none}` — exit non-zero if any *new* finding at this severity or above appears since baseline. `none` disables severity-based exit codes entirely. Designed for CI: a clean delta = exit 0 even if absolute findings exist, because they were already in the baseline.
+- **Reporter integration** — every existing reporter renders delta information when present:
+  - **HTML** — new "Delta vs Baseline" section above the Findings table, with summary tiles (new / resolved / unchanged / score change) and per-list tables. Hidden when no baseline.
+  - **JSON** — the `delta` field auto-serialises in the report payload.
+  - **SARIF 2.1.0** — every result now carries `partialFingerprints["ciguard/v1"]` (the same 16-char fingerprint, suitable for SARIF consumers' own diffing). When a baseline is present, results gain SARIF's native `baselineState` field (`"new"` | `"unchanged"` | `"absent"`); resolved findings are emitted as separate `absent` results so GitHub Code Scanning auto-closes them.
+  - **PDF** — no delta section yet (deferred to v0.5.1 — the reportlab layout needs targeted work).
+- **`Report.scanner_version`** — every report now records the ciguard version that produced it. Stored in baselines too, for forward-compatibility checks.
+
+### Changed
+- `Finding` is now a `pydantic.computed_field` for `fingerprint` — non-breaking; existing serialisations gain the field, existing readers ignore it.
+
+### Validation
+- **288 / 288 tests passing** (was 267 in v0.4.1; +21 tests across `test_baseline.py` (17) and `test_sarif_report.py::TestSARIFBaselineState` (4)).
+- Labelled-fixture validation: 100% recall, 0 FP across all 6 Jenkins + 4 GitLab fixtures.
+- End-to-end smoke: empty baseline marks all findings as `new`; identical scan against own baseline reports zero changes; pipeline edits show the right new/resolved partition; `--fail-on-new=High` correctly returns exit 1 when a new High appears.
+- Lint clean. No regressions to the 17-project GitLab corpus run.
+
+### PRD status
+With v0.5.0 the original PRD's Slice 6 — Multi-Platform Expansion — is complete: GitHub Actions (v0.2.x), SARIF (v0.3.0), Jenkins Declarative + Scripted (v0.4.0/v0.4.1), and now baseline/delta reports. **The original PRD scope is fully shipped, ahead of the 2026-05-31 due date.**
+
 ## [0.4.1] — 2026-04-25
 
 ### Added

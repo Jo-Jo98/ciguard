@@ -6,11 +6,13 @@ Pydantic v2 is used for validation and serialisation.
 """
 from __future__ import annotations
 
+import hashlib
+import re
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +203,29 @@ class ComplianceMapping(BaseModel):
     nist: List[str] = Field(default_factory=list)
 
 
+def _compute_finding_fingerprint(rule_id: str, location: str, evidence: str) -> str:
+    """Stable identity hash for a finding. Survives line-number drift, file
+    reformatting, and re-runs that produce slightly different evidence
+    whitespace. Used by the v0.5 baseline / delta machinery to decide
+    whether a finding is *new*, *resolved*, or *unchanged* across runs.
+
+    Inputs are normalised:
+      - `location` has any trailing `:<line_no>` stripped, so PIPE-003 firing
+        at `stage[Build]:5` and `stage[Build]:7` (after a code shuffle that
+        moves the line) hash to the same fingerprint.
+      - `evidence` is lowercased, whitespace-collapsed, and truncated to
+        80 chars — enough to disambiguate two findings of the same rule
+        against the same location, but stable across cosmetic edits.
+
+    Severity / category are intentionally NOT included — if a rule's
+    severity is later re-tuned, we want the *same* finding to keep its
+    fingerprint so the baseline still recognises it as `unchanged`."""
+    norm_location = re.sub(r":\d+$", "", location)
+    norm_evidence = " ".join(evidence.lower().split())[:80]
+    payload = f"{rule_id}|{norm_location}|{norm_evidence}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
 class Finding(BaseModel):
     id: str
     rule_id: str
@@ -213,6 +238,13 @@ class Finding(BaseModel):
     remediation: str
     compliance: ComplianceMapping
     source: str = "ciguard"   # "ciguard" | scanner name (e.g. "semgrep")
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def fingerprint(self) -> str:
+        """Stable identity hash for baseline / delta diffing. See
+        `_compute_finding_fingerprint` for the normalisation rules."""
+        return _compute_finding_fingerprint(self.rule_id, self.location, self.evidence)
 
     @property
     def severity_order(self) -> int:
@@ -263,6 +295,42 @@ class LLMInsights(BaseModel):
     model_used: str
 
 
+class Delta(BaseModel):
+    """Result of comparing the current scan against a baseline (v0.5).
+
+    `new` / `resolved` / `unchanged` are lists of findings classified by
+    fingerprint match against the baseline. `score_delta` is the change
+    in overall risk score (positive = improvement, negative = regression).
+
+    Reporters render delta sections when `Report.delta` is non-None.
+    SARIF maps to native `baselineState` (`new` | `unchanged` | `absent`)."""
+    baseline_path: str                                 # source baseline file
+    baseline_timestamp: str                            # when the baseline was written
+    baseline_scanner_version: str                      # ciguard version at baseline time
+    new: List[Finding] = Field(default_factory=list)
+    resolved: List[Finding] = Field(default_factory=list)   # in baseline, not in current
+    unchanged: List[Finding] = Field(default_factory=list)
+    score_delta: float = 0.0                           # current.overall - baseline.overall
+
+    @property
+    def has_regressions(self) -> bool:
+        """True if any new finding appeared since baseline."""
+        return len(self.new) > 0
+
+    def new_at_or_above(self, threshold: Severity) -> List[Finding]:
+        """Return new findings whose severity is at or above `threshold`.
+        Used by `--fail-on-new=<severity>` for CI exit-code semantics."""
+        order = {
+            Severity.CRITICAL: 0,
+            Severity.HIGH: 1,
+            Severity.MEDIUM: 2,
+            Severity.LOW: 3,
+            Severity.INFO: 4,
+        }
+        cutoff = order.get(threshold, 99)
+        return [f for f in self.new if order.get(f.severity, 99) <= cutoff]
+
+
 class Report(BaseModel):
     pipeline_name: str
     scan_timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
@@ -275,6 +343,8 @@ class Report(BaseModel):
     llm_insights: Optional[LLMInsights] = None
     policy_report: Optional[Any] = None   # PolicyReport — Optional import to avoid circular dep
     scanner_findings: List[Any] = Field(default_factory=list)  # List[ScannerFinding]
+    delta: Optional[Delta] = None         # populated when --baseline supplied (v0.5+)
+    scanner_version: str = ""             # ciguard version that produced this report (v0.5+)
 
     def findings_by_severity(self, severity: Severity) -> List[Finding]:
         return [f for f in self.findings if f.severity == severity]

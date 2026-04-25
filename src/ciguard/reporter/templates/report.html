@@ -821,6 +821,79 @@
   {% endif %}
 </div>
 
+{% if report.delta %}
+<!-- ======================================
+     DELTA — comparison against baseline (v0.5)
+======================================= -->
+<div class="section" id="delta">
+  <div class="section-title">
+    <span class="icon">&#9651;</span>
+    Delta vs Baseline
+    <span style="font-size:13px; font-weight:400; color:var(--text-muted);">
+      (baseline written {{ report.delta.baseline_timestamp }} by ciguard {{ report.delta.baseline_scanner_version }})
+    </span>
+  </div>
+  <div style="display:flex; gap:24px; flex-wrap:wrap; margin-bottom:16px;">
+    <div style="background:#3a1a1a; border:1px solid #6a2a2a; padding:12px 18px; border-radius:8px; min-width:140px;">
+      <div style="font-size:11px; color:#ff8a8a; text-transform:uppercase; letter-spacing:0.5px;">New</div>
+      <div style="font-size:28px; font-weight:700; color:#ff8a8a;">{{ report.delta.new | length }}</div>
+    </div>
+    <div style="background:#1a3a1a; border:1px solid #2a6a2a; padding:12px 18px; border-radius:8px; min-width:140px;">
+      <div style="font-size:11px; color:#8aff8a; text-transform:uppercase; letter-spacing:0.5px;">Resolved</div>
+      <div style="font-size:28px; font-weight:700; color:#8aff8a;">{{ report.delta.resolved | length }}</div>
+    </div>
+    <div style="background:var(--bg-card2); border:1px solid var(--border); padding:12px 18px; border-radius:8px; min-width:140px;">
+      <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Unchanged</div>
+      <div style="font-size:28px; font-weight:700; color:var(--text-muted);">{{ report.delta.unchanged | length }}</div>
+    </div>
+    <div style="background:var(--bg-card2); border:1px solid var(--border); padding:12px 18px; border-radius:8px; min-width:140px;">
+      <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Score Change</div>
+      <div style="font-size:28px; font-weight:700; color:{% if report.delta.score_delta > 0 %}#8aff8a{% elif report.delta.score_delta < 0 %}#ff8a8a{% else %}var(--text-muted){% endif %};">
+        {% if report.delta.score_delta > 0 %}+{% endif %}{{ report.delta.score_delta }}
+      </div>
+    </div>
+  </div>
+
+  {% if report.delta.new %}
+  <h3 style="color:#ff8a8a; margin-top:18px; font-size:14px; text-transform:uppercase; letter-spacing:0.5px;">New since baseline</h3>
+  <table class="findings-table">
+    <thead><tr><th>Severity</th><th>Rule</th><th>Finding</th><th>Location</th></tr></thead>
+    <tbody>
+      {% for f in report.delta.new %}
+      <tr>
+        <td><span class="severity-pill {{ f.severity.value | severity_class }}">{{ f.severity.value }}</span></td>
+        <td><code>{{ f.rule_id }}</code></td>
+        <td>{{ f.name }}</td>
+        <td><code>{{ f.location }}</code></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if report.delta.resolved %}
+  <h3 style="color:#8aff8a; margin-top:18px; font-size:14px; text-transform:uppercase; letter-spacing:0.5px;">Resolved since baseline</h3>
+  <table class="findings-table">
+    <thead><tr><th>Severity</th><th>Rule</th><th>Finding</th><th>Location</th></tr></thead>
+    <tbody>
+      {% for f in report.delta.resolved %}
+      <tr>
+        <td><span class="severity-pill {{ f.severity.value | severity_class }}">{{ f.severity.value }}</span></td>
+        <td><code>{{ f.rule_id }}</code></td>
+        <td>{{ f.name }}</td>
+        <td><code>{{ f.location }}</code></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if not report.delta.new and not report.delta.resolved %}
+  <p style="color:var(--text-muted); font-style:italic;">No changes since baseline — {{ report.delta.unchanged | length }} finding{% if report.delta.unchanged | length != 1 %}s{% endif %} unchanged.</p>
+  {% endif %}
+</div>
+{% endif %}
+
 <!-- ======================================
      FINDINGS
 ======================================= -->

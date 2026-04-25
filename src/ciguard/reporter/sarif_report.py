@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..models.pipeline import Finding, Report, Severity
 
@@ -102,9 +102,20 @@ def _tags_for(finding: Finding) -> List[str]:
     return tags
 
 
-def _result(finding: Finding, artifact_uri: str) -> Dict[str, Any]:
-    """Convert a Finding to a SARIF `result`."""
-    return {
+def _result(
+    finding: Finding,
+    artifact_uri: str,
+    baseline_state: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Convert a Finding to a SARIF `result`.
+
+    `baseline_state` is set when the report has a delta. SARIF 2.1.0
+    defines `baselineState` as one of `"new"`, `"unchanged"`, `"updated"`,
+    `"absent"`. ciguard maps:
+      - `new` for findings absent from the baseline
+      - `unchanged` for findings present in both
+      - `absent` for resolved findings (rendered as separate results)"""
+    result: Dict[str, Any] = {
         "ruleId": finding.rule_id,
         "level": _level_for(finding.severity),
         "message": {"text": finding.description},
@@ -117,6 +128,9 @@ def _result(finding: Finding, artifact_uri: str) -> Dict[str, Any]:
             },
             "logicalLocations": [{"name": finding.location}] if finding.location else [],
         }],
+        "partialFingerprints": {
+            "ciguard/v1": finding.fingerprint,
+        },
         "properties": {
             "severity": finding.severity.value,
             "security-severity": _security_severity(finding.severity),
@@ -124,6 +138,9 @@ def _result(finding: Finding, artifact_uri: str) -> Dict[str, Any]:
             "evidence": finding.evidence,
         },
     }
+    if baseline_state is not None:
+        result["baselineState"] = baseline_state
+    return result
 
 
 def _tool_version() -> str:
@@ -145,10 +162,34 @@ class SARIFReporter:
         results: List[Dict[str, Any]] = []
         rules_by_id: Dict[str, Dict[str, Any]] = {}
 
+        # Map fingerprints to baseline state when a delta is present.
+        baseline_state_by_fp: Dict[str, str] = {}
+        if report.delta is not None:
+            for f in report.delta.new:
+                baseline_state_by_fp[f.fingerprint] = "new"
+            for f in report.delta.unchanged:
+                baseline_state_by_fp[f.fingerprint] = "unchanged"
+
         for finding in report.findings:
             if finding.rule_id not in rules_by_id:
                 rules_by_id[finding.rule_id] = _rule_definition(finding)
-            results.append(_result(finding, artifact_uri=report.pipeline_name))
+            results.append(_result(
+                finding,
+                artifact_uri=report.pipeline_name,
+                baseline_state=baseline_state_by_fp.get(finding.fingerprint),
+            ))
+
+        # Resolved findings — render as `absent` results so SARIF consumers
+        # (e.g. GitHub Code Scanning) can mark them as auto-closed.
+        if report.delta is not None:
+            for f in report.delta.resolved:
+                if f.rule_id not in rules_by_id:
+                    rules_by_id[f.rule_id] = _rule_definition(f)
+                results.append(_result(
+                    f,
+                    artifact_uri=report.pipeline_name,
+                    baseline_state="absent",
+                ))
 
         sarif: Dict[str, Any] = {
             "$schema": SARIF_SCHEMA,

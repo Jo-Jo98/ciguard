@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Optional
 
 # Allow running as `python src/main.py` from the project root
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -215,6 +216,43 @@ def cmd_scan(args: argparse.Namespace) -> int:
             except Exception as exc:
                 print(f"{_YELLOW}SKIP{_RESET}  ({exc})")
 
+    # ---- Baseline diff (v0.5)
+    baseline_path: Optional[Path] = None
+    if args.baseline:
+        baseline_path = Path(args.baseline)
+    elif args.update_baseline:
+        # User asked to write the baseline but didn't say where — use default.
+        from ciguard.analyzer.baseline import default_baseline_path
+        baseline_path = default_baseline_path(input_path)
+
+    if args.baseline and baseline_path is not None:
+        from ciguard.analyzer.baseline import compute_delta, load_baseline
+        if baseline_path.exists():
+            try:
+                baseline_data = load_baseline(baseline_path)
+                report.delta = compute_delta(report, baseline_data, baseline_path)
+                d = report.delta
+                delta_colour = _RED if d.has_regressions else _GREEN
+                print(
+                    f"  {_DIM}Δ{_RESET} {delta_colour}{len(d.new)} new{_RESET}, "
+                    f"{_GREEN}{len(d.resolved)} resolved{_RESET}, "
+                    f"{_DIM}{len(d.unchanged)} unchanged{_RESET}  "
+                    f"(baseline: {baseline_path.name})"
+                )
+            except Exception as exc:
+                print(
+                    f"  {_YELLOW}Warning:{_RESET} could not read baseline at "
+                    f"{baseline_path}: {exc}",
+                    file=sys.stderr,
+                )
+        else:
+            print(
+                f"  {_YELLOW}Warning:{_RESET} --baseline {baseline_path} does not "
+                f"exist yet. Run `ciguard baseline -i {input_path}` to seed it, "
+                f"or use --update-baseline to write one from this scan.",
+                file=sys.stderr,
+            )
+
     # ---- Write report
     output = args.output
     fmt    = (getattr(args, "format", None) or "").lower()
@@ -255,8 +293,84 @@ def cmd_scan(args: argparse.Namespace) -> int:
         print(f"  Unknown format {suffix!r}. Use .html, .json, .pdf, or .sarif", file=sys.stderr)
         return 1
 
+    # ---- Update baseline if requested (v0.5)
+    if args.update_baseline and baseline_path is not None:
+        from ciguard.analyzer.baseline import write_baseline
+        write_baseline(report, baseline_path)
+        print(f"  {_DIM}Baseline updated: {baseline_path}{_RESET}")
+
     _print_terminal_report(report)
+
+    # ---- Exit code
+    # --fail-on-new (v0.5) overrides the default severity-based exit logic
+    # when set. Designed for CI: a clean delta = exit 0 even if absolute
+    # findings exist, because they were already in the baseline.
+    if args.fail_on_new is not None:
+        if args.fail_on_new == "none":
+            return 0
+        if report.delta is None:
+            print(
+                f"\n{_YELLOW}Warning:{_RESET} --fail-on-new requires a readable "
+                f"baseline; exit code will fall back to default severity logic.",
+                file=sys.stderr,
+            )
+        else:
+            from ciguard.models.pipeline import Severity
+            threshold = Severity(args.fail_on_new)
+            new_above = report.delta.new_at_or_above(threshold)
+            return 1 if new_above else 0
+
     return 2 if crits > 0 else (1 if highs > 0 else 0)
+
+
+def cmd_baseline(args: argparse.Namespace) -> int:
+    """Run a scan and write its findings as a baseline JSON file.
+    Lighter than `cmd_scan` — no policies, no LLM, no terminal report,
+    no other output. Just: parse → analyse → write baseline."""
+    input_path = Path(args.input)
+    if not input_path.exists():
+        print(f"{_RED}Error:{_RESET} File not found: {input_path}", file=sys.stderr)
+        return 1
+
+    print(f"{_DIM}[1/3]{_RESET} Parsing {input_path.name} ...", end=" ", flush=True)
+    try:
+        platform = args.platform
+        if platform == "auto":
+            if looks_like_jenkinsfile(input_path):
+                platform = "jenkins"
+            else:
+                import yaml
+                with open(input_path, "r", encoding="utf-8") as fh:
+                    raw_peek = yaml.safe_load(fh)
+                platform = (
+                    detect_format(raw_peek) if isinstance(raw_peek, dict) else "gitlab-ci"
+                )
+        if platform == "github-actions":
+            target = GitHubActionsParser().parse_file(input_path)
+        elif platform == "jenkins":
+            target = JenkinsfileParser().parse_file(input_path)
+        else:
+            target = GitLabCIParser().parse_file(input_path)
+    except Exception as exc:
+        print(f"{_RED}FAILED{_RESET}")
+        print(f"  {exc}", file=sys.stderr)
+        return 1
+    print(f"{_GREEN}OK{_RESET}")
+
+    print(f"{_DIM}[2/3]{_RESET} Running security rules ...", end=" ", flush=True)
+    report = AnalysisEngine().analyse(target, pipeline_name=input_path.name)
+    print(f"{_GREEN}OK{_RESET}  ({report.summary['total']} findings captured)")
+
+    print(f"{_DIM}[3/3]{_RESET} Writing baseline ...", end=" ", flush=True)
+    from ciguard.analyzer.baseline import default_baseline_path, write_baseline
+    out_path = Path(args.output) if args.output else default_baseline_path(input_path)
+    write_baseline(report, out_path)
+    print(f"{_GREEN}OK{_RESET}  → {out_path}")
+    print(
+        f"\n  Baseline written. Use `ciguard scan -i {input_path} "
+        f"--baseline {out_path}` on subsequent runs to see the delta."
+    )
+    return 0
 
 
 def _print_terminal_report(report) -> None:
@@ -380,11 +494,55 @@ def main() -> int:
         "--llm-model", default=None,
         help="Override the LLM model (e.g. claude-haiku-4-5-20251001, gpt-4o-mini).",
     )
+    # ---- Baseline / delta flags (v0.5)
+    scan_parser.add_argument(
+        "--baseline", default=None,
+        help="Path to a baseline JSON file. Findings absent from the baseline "
+             "are flagged as `new`; findings only in the baseline as `resolved`. "
+             "Default location: `.ciguard/baseline.json` next to the input file.",
+    )
+    scan_parser.add_argument(
+        "--update-baseline", action="store_true", default=False,
+        help="After scanning, write the current findings as the new baseline "
+             "(at the path given by --baseline, or the default location). "
+             "Use this to acknowledge findings as the new accepted state.",
+    )
+    scan_parser.add_argument(
+        "--fail-on-new", default=None,
+        choices=["Critical", "High", "Medium", "Low", "Info", "none"],
+        help="Exit non-zero if any *new* finding at this severity or above "
+             "appears since the baseline. Requires --baseline. `none` disables "
+             "all severity-based exit codes (returns 0 unless an error occurred).",
+    )
+
+    # ---- `baseline` subcommand: write a baseline from a fresh scan, no report.
+    baseline_parser = subparsers.add_parser(
+        "baseline",
+        help="Run a scan and write its findings as a baseline JSON file. "
+             "Use this once to seed the baseline; thereafter, `scan --baseline` "
+             "diffs against it.",
+    )
+    baseline_parser.add_argument(
+        "--input", "-i", required=True,
+        help="Path to the pipeline file (.gitlab-ci.yml, .github/workflows/*.yml, or Jenkinsfile).",
+    )
+    baseline_parser.add_argument(
+        "--output", "-o", default=None,
+        help="Where to write the baseline JSON. Default: `.ciguard/baseline.json` "
+             "next to the input file.",
+    )
+    baseline_parser.add_argument(
+        "--platform", "-p", default="auto",
+        choices=["auto", "gitlab-ci", "github-actions", "jenkins"],
+        help="Pipeline platform. `auto` (default) inspects the file to decide.",
+    )
 
     args = parser.parse_args()
 
     if args.command == "scan":
         return cmd_scan(args)
+    elif args.command == "baseline":
+        return cmd_baseline(args)
     else:
         parser.print_help()
         return 0

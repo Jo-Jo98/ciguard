@@ -10,6 +10,7 @@ from typing import Dict, List
 
 from typing import Union
 
+from .. import __version__
 from ..models.jenkinsfile import Jenkinsfile
 from ..models.pipeline import (
     Category,
@@ -98,6 +99,7 @@ class AnalysisEngine:
             pipeline=pipeline,
             platform="gitlab-ci",
             summary=summary,
+            scanner_version=__version__,
         )
 
     # ------------------------------------------------------------------
@@ -134,6 +136,7 @@ class AnalysisEngine:
             workflow=workflow,
             platform="github-actions",
             summary=summary,
+            scanner_version=__version__,
         )
 
     # ------------------------------------------------------------------
@@ -169,6 +172,7 @@ class AnalysisEngine:
             pipeline=synthetic,
             platform="jenkins",
             summary=summary,
+            scanner_version=__version__,
         )
 
     # ------------------------------------------------------------------

@@ -180,3 +180,66 @@ class TestSARIFEdgeCases:
         sarif = json.loads(SARIFReporter().render(report))
         assert sarif["runs"][0]["results"][0]["level"] == "error"
         assert sarif["runs"][0]["results"][0]["properties"]["security-severity"] == "9.5"
+
+
+# ---------------------------------------------------------------------------
+# Baseline state in SARIF output (v0.5)
+# ---------------------------------------------------------------------------
+
+class TestSARIFBaselineState:
+    def test_partial_fingerprints_present_on_every_result(self):
+        p = GitLabCIParser().parse_file(FIXTURES / "bad_pipeline.yml")
+        report = AnalysisEngine().analyse(p, "bad_pipeline.yml")
+        sarif = json.loads(SARIFReporter().render(report))
+        for r in sarif["runs"][0]["results"]:
+            assert "partialFingerprints" in r
+            assert "ciguard/v1" in r["partialFingerprints"]
+            assert len(r["partialFingerprints"]["ciguard/v1"]) == 16
+
+    def test_baseline_state_omitted_when_no_delta(self):
+        p = GitLabCIParser().parse_file(FIXTURES / "bad_pipeline.yml")
+        report = AnalysisEngine().analyse(p, "bad_pipeline.yml")
+        sarif = json.loads(SARIFReporter().render(report))
+        for r in sarif["runs"][0]["results"]:
+            assert "baselineState" not in r
+
+    def test_baseline_state_set_when_delta_present(self, tmp_path):
+        from ciguard.analyzer.baseline import compute_delta, load_baseline
+
+        p = GitLabCIParser().parse_file(FIXTURES / "bad_pipeline.yml")
+        report = AnalysisEngine().analyse(p, "bad_pipeline.yml")
+
+        # Empty baseline → every current finding is `new`.
+        baseline_file = tmp_path / "baseline.json"
+        baseline_file.write_text(json.dumps({
+            "format_version": 1, "scanner_version": "0.5.0",
+            "scan_timestamp": "2026-04-25T00:00:00",
+            "pipeline_name": "x", "platform": "gitlab-ci",
+            "overall_score": 100.0, "grade": "A", "findings": [],
+        }))
+        report.delta = compute_delta(report, load_baseline(baseline_file), baseline_file)
+
+        sarif = json.loads(SARIFReporter().render(report))
+        states = {r["baselineState"] for r in sarif["runs"][0]["results"]}
+        assert states == {"new"}
+
+    def test_resolved_findings_appear_as_absent_results(self, tmp_path):
+        from ciguard.analyzer.baseline import compute_delta, load_baseline, write_baseline
+
+        # Baseline = bad pipeline (lots of findings).
+        bad_pipe = GitLabCIParser().parse_file(FIXTURES / "bad_pipeline.yml")
+        bad_report = AnalysisEngine().analyse(bad_pipe, "bad_pipeline.yml")
+        baseline_file = tmp_path / "baseline.json"
+        write_baseline(bad_report, baseline_file)
+
+        # Current scan = good pipeline (zero findings) → everything resolved.
+        good_pipe = GitLabCIParser().parse_file(FIXTURES / "good_pipeline.yml")
+        good_report = AnalysisEngine().analyse(good_pipe, "good_pipeline.yml")
+        good_report.delta = compute_delta(good_report, load_baseline(baseline_file), baseline_file)
+
+        sarif = json.loads(SARIFReporter().render(good_report))
+        results = sarif["runs"][0]["results"]
+        # All results should be the resolved findings flagged as `absent`.
+        assert len(results) == len(bad_report.findings)
+        states = {r["baselineState"] for r in results}
+        assert states == {"absent"}
