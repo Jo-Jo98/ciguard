@@ -41,12 +41,14 @@ evaluator = PolicyEvaluator()
 
 class TestPolicyModels:
     def test_builtin_count(self):
-        # 7 GitLab CI built-ins + 6 GitHub Actions built-ins (added in v0.2.1).
-        assert len(BUILTIN_POLICIES) == 13
+        # 7 GitLab CI + 6 GitHub Actions (v0.2.1) + 4 Jenkins (v0.4.0).
+        assert len(BUILTIN_POLICIES) == 17
         gitlab = [p for p in BUILTIN_POLICIES if p.applies_to("gitlab-ci") and not p.applies_to("github-actions")]
         gha = [p for p in BUILTIN_POLICIES if p.applies_to("github-actions") and not p.applies_to("gitlab-ci")]
+        jenkins = [p for p in BUILTIN_POLICIES if p.applies_to("jenkins") and not p.applies_to("gitlab-ci")]
         assert len(gitlab) == 7
         assert len(gha) == 6
+        assert len(jenkins) == 4
 
     def test_builtin_ids_unique(self):
         ids = [p.id for p in BUILTIN_POLICIES]

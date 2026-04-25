@@ -63,10 +63,10 @@ Exit codes: `0` clean, `2` critical findings, `1` error.
 
 ## Features
 
-- **Two platforms** — GitLab CI (19 rules) and GitHub Actions (12 rules covering supply-chain, IAM, runner, deploy-governance, plus advanced GHA-specific risks: `pull_request_target` misuse, token-theft windows, `secrets: inherit` to unpinned reusable workflows, bare self-hosted runners). Format auto-detected from the YAML; `--platform` override available.
-- **31 deterministic security rules** across 6 categories
+- **Three platforms** — GitLab CI (19 rules), GitHub Actions (12 rules covering supply-chain, IAM, runner, deploy-governance, plus advanced GHA-specific risks: `pull_request_target` misuse, token-theft windows, `secrets: inherit` to unpinned reusable workflows, bare self-hosted runners), and Jenkins Declarative Pipelines (6 rules: unpinned docker agents, hardcoded secrets, unconstrained `agent any`, privileged docker args, dangerous shell patterns, dynamic Groovy `script {}` blocks). Format auto-detected by filename / content sniff / YAML shape; `--platform` override available.
+- **37 deterministic security rules** across 6 categories
   (Pipeline Integrity, Identity & Access, Runner Security, Artifact Handling, Deployment Governance, Supply Chain)
-- **Policy engine** — 7 built-in organisational policies + custom YAML policies (built-ins are GitLab-specific in v0.2; GHA-aware built-ins on the v0.2.x roadmap)
+- **Policy engine** — 17 built-in organisational policies (7 GitLab CI + 6 GitHub Actions + 4 Jenkins) plus custom YAML policies. Each built-in declares the platforms it applies to; the evaluator filters automatically.
 - **Scanner integrations** — Semgrep CE, OpenSSF Scorecard, GitLab native security artifacts (all optional, graceful when unavailable)
 - **AI enrichment** — optional Claude / OpenAI executive summaries and remediation plans
 - **Four report formats** — HTML (dark, self-contained, no CDN), JSON (API-ready), PDF (8 sections, audit-grade), SARIF 2.1.0 (uploads to GitHub Code Scanning → Security tab)

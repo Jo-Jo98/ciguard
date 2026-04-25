@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ciguard"
-version = "0.3.0"
-description = "Static security auditor for CI/CD pipelines (GitLab CI today; GitHub Actions + Jenkins in development)."
+version = "0.4.0"
+description = "Static security auditor for CI/CD pipelines — GitLab CI, GitHub Actions, and Jenkins Declarative Pipelines."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }

@@ -10,6 +10,7 @@ from typing import Dict, List
 
 from typing import Union
 
+from ..models.jenkinsfile import Jenkinsfile
 from ..models.pipeline import (
     Category,
     Finding,
@@ -21,6 +22,7 @@ from ..models.pipeline import (
 )
 from ..models.workflow import Workflow
 from .gha_rules import GHA_RULES
+from .jenkins_rules import JENKINS_RULES
 from .rules import RULES, _reset_counters
 
 # ---------------------------------------------------------------------------
@@ -54,16 +56,19 @@ _CATEGORY_MAP: Dict[Category, str] = {
 
 
 class AnalysisEngine:
-    """Runs security rules against a Pipeline (GitLab CI) or a Workflow
-    (GitHub Actions) and returns a unified `Report`."""
+    """Runs security rules against a Pipeline (GitLab CI), Workflow
+    (GitHub Actions), or Jenkinsfile (Jenkins Declarative Pipeline) and
+    returns a unified `Report`."""
 
     def analyse(
         self,
-        target: Union[Pipeline, Workflow],
+        target: Union[Pipeline, Workflow, Jenkinsfile],
         pipeline_name: str = "pipeline",
     ) -> Report:
         if isinstance(target, Workflow):
             return self._analyse_workflow(target, pipeline_name)
+        if isinstance(target, Jenkinsfile):
+            return self._analyse_jenkinsfile(target, pipeline_name)
         return self._analyse_pipeline(target, pipeline_name)
 
     # ------------------------------------------------------------------
@@ -128,6 +133,41 @@ class AnalysisEngine:
             pipeline=synthetic,
             workflow=workflow,
             platform="github-actions",
+            summary=summary,
+        )
+
+    # ------------------------------------------------------------------
+    # Jenkins Declarative Pipeline path (new in v0.4.0)
+    # ------------------------------------------------------------------
+
+    def _analyse_jenkinsfile(self, jf: Jenkinsfile, pipeline_name: str) -> Report:
+        _reset_counters()
+
+        findings: List[Finding] = []
+        for rule in JENKINS_RULES:
+            try:
+                findings.extend(rule(jf))
+            except Exception as exc:
+                import traceback
+                print(f"[WARN] Rule {rule.__name__} raised: {exc}\n{traceback.format_exc()}")
+
+        risk_score = self._calculate_risk(findings)
+        summary = self._build_summary(findings)
+
+        # Synthesise a Pipeline shadow so reporters / web UI keep showing a
+        # job-equivalent count. Each Jenkins stage becomes a Pipeline job.
+        # Jenkins doesn't have GitLab-style stages, so stages stays empty.
+        synthetic = Pipeline(
+            stages=[],
+            jobs=[PipelineJob(name=s.name) for s in jf.stages],
+        )
+
+        return Report(
+            pipeline_name=pipeline_name,
+            findings=findings,
+            risk_score=risk_score,
+            pipeline=synthetic,
+            platform="jenkins",
             summary=summary,
         )
 

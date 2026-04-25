@@ -3,6 +3,32 @@
 All notable changes to `ciguard` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.0] — 2026-04-25
+
+### Added
+- **Third platform: Jenkins Declarative Pipelines.** ciguard now scans `Jenkinsfile` (Groovy DSL) sources alongside GitLab CI YAML and GitHub Actions workflows. Platform is auto-detected from filename (`Jenkinsfile`, `*.jenkinsfile`, `*.groovy`) or content sniff (`pipeline {` at top level), falling back to YAML shape detection for the YAML platforms. Scripted Pipelines (no `pipeline {}` block) are flagged with a parse warning — out of scope for this release.
+- **Six Jenkins security rules** covering the GitLab/GHA-equivalent threat surface plus two Jenkins-specific rules:
+  - `JKN-PIPE-001` — **Unpinned container agent image** (High). `agent { docker { image '...' } }` references must pin to a digest or specific tag; `:latest` and bare names allow upstream replacement.
+  - `JKN-IAM-001` — **Hardcoded secret in `environment` block** (High). Secret-shaped keys with literal values; the safe pattern is `KEY = credentials('id')`.
+  - `JKN-RUN-001` — **Unconstrained top-level `agent any`** (Medium). Build can land on any executor including shared general-purpose nodes.
+  - `JKN-RUN-002` — **Privileged docker agent** (Critical). `args` containing `--privileged`, `--pid=host`, `--net=host`, `/var/run/docker.sock`, `--cap-add=ALL`, or `--user=root` — each lets a compromised build escape the container sandbox.
+  - `JKN-SC-001` — **Dangerous shell pattern** in `sh`/`bat`/`powershell` step bodies (High). Same detection as PIPE-003 / GHA-SC-001: curl-pipe-bash, eval `$VAR`, PowerShell IEX cradles.
+  - `JKN-SC-002` — **Dynamic Groovy `script { }` block inside steps** (Info). Bypasses the Declarative whitelist; surfaced for review rather than blocked outright.
+- **Four Jenkins-aware built-in policies** (`POL-JKN-001` … `POL-JKN-004`) keyed off the Jenkins rule families and gated by `platforms: ["jenkins"]`. Mirrors the GHA policy bundle from v0.2.1.
+- **Hand-rolled Groovy-aware parser** (`ciguard.parser.jenkinsfile`). Strips `//` and `/* */` comments without touching string contents; tracks brace + paren balance through single-, double-, and triple-quoted strings; depth-0 directive matching so per-stage `agent`/`environment` blocks don't shadow the top-level ones; captures `sh`/`bat`/`powershell` bodies in both bare-string and parenthesised named-arg (`sh(script: '...', returnStdout: true)`) forms; recognises `withCredentials([...]) { ... }` and `script { }` blocks; flattens nested `parallel { stage(...) { ... } }` into per-stage parallel children.
+
+### Changed
+- `--platform` CLI choice extended with `jenkins`. Auto-detect now sniffs filename + content before YAML parsing so Jenkinsfiles don't error out on `yaml.safe_load`.
+- Web `/api/scan` upload endpoint accepts Jenkinsfiles; the original filename is preserved through the temp-file dance so the filename-based heuristic still fires.
+- README + roadmap: ciguard now markets as a **three-platform** tool (was two).
+- Total deterministic security rules across all three platforms: 31 → 37.
+- Total built-in policies: 13 → 17.
+
+### Internal
+- 36 new tests (213 → 249 passing) covering: parser comment + brace + string handling, depth-0 block extraction, parallel-stage flattening, all six rule firings against the bad/good fixtures, end-to-end engine dispatch, and the `looks_like_jenkinsfile` heuristic.
+- `Jenkinsfile` model joins `Pipeline` and `Workflow` as a third top-level analysis target. `AnalysisEngine.analyse()` dispatches on type; the Jenkins path synthesises a `Pipeline` shadow (each stage → job) so existing reporters and the web UI keep working unchanged.
+- `_extract_block` rewritten to track brace + string state and only match at depth 0, fixing a class of false-positive directive matches that affected nested-stage parsing.
+
 ## [0.3.0] — 2026-04-25
 
 ### Added

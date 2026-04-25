@@ -18,10 +18,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ciguard.analyzer.engine import AnalysisEngine
+from ciguard.models.jenkinsfile import Jenkinsfile
 from ciguard.models.pipeline import Severity
 from ciguard.models.workflow import Workflow
 from ciguard.parser.github_actions import GitHubActionsParser, detect_format
 from ciguard.parser.gitlab_parser import GitLabCIParser
+from ciguard.parser.jenkinsfile import JenkinsfileParser, looks_like_jenkinsfile
 from ciguard.policy.builtin import BUILTIN_POLICIES
 from ciguard.policy.evaluator import PolicyEvaluator
 from ciguard.policy.loader import load_policies_from_directory, load_policies_from_file
@@ -72,20 +74,32 @@ def cmd_scan(args: argparse.Namespace) -> int:
     try:
         platform = args.platform
         if platform == "auto":
-            import yaml
-            with open(input_path, "r", encoding="utf-8") as fh:
-                raw_peek = yaml.safe_load(fh)
-            platform = (
-                detect_format(raw_peek) if isinstance(raw_peek, dict) else "gitlab-ci"
-            )
+            # Filename / content sniff first — Jenkinsfiles aren't YAML so we
+            # can't probe them with `yaml.safe_load` without raising.
+            if looks_like_jenkinsfile(input_path):
+                platform = "jenkins"
+            else:
+                import yaml
+                with open(input_path, "r", encoding="utf-8") as fh:
+                    raw_peek = yaml.safe_load(fh)
+                platform = (
+                    detect_format(raw_peek) if isinstance(raw_peek, dict) else "gitlab-ci"
+                )
 
         if platform == "github-actions":
             workflow = GitHubActionsParser().parse_file(input_path)
             pipeline = None
+            jenkinsfile = None
             target_for_summary = workflow
+        elif platform == "jenkins":
+            jenkinsfile = JenkinsfileParser().parse_file(input_path)
+            workflow = None
+            pipeline = None
+            target_for_summary = jenkinsfile
         else:
             pipeline = GitLabCIParser().parse_file(input_path)
             workflow = None
+            jenkinsfile = None
             target_for_summary = pipeline
     except Exception as exc:
         print(f"{_RED}FAILED{_RESET}")
@@ -97,6 +111,17 @@ def cmd_scan(args: argparse.Namespace) -> int:
             f"{_GREEN}OK{_RESET}  "
             f"({len(workflow.jobs)} jobs, GitHub Actions workflow)"
         )
+    elif isinstance(target_for_summary, Jenkinsfile):
+        if jenkinsfile.is_scripted:
+            print(
+                f"{_YELLOW}WARN{_RESET}  "
+                f"(no `pipeline {{}}` block — Scripted Pipelines are out of scope for v0.4)"
+            )
+        else:
+            print(
+                f"{_GREEN}OK{_RESET}  "
+                f"({len(jenkinsfile.stages)} stages, Jenkins Declarative Pipeline)"
+            )
     else:
         print(
             f"{_GREEN}OK{_RESET}  "
@@ -319,8 +344,8 @@ def main() -> int:
     )
     scan_parser.add_argument(
         "--platform", "-p", default="auto",
-        choices=["auto", "gitlab-ci", "github-actions"],
-        help="Pipeline platform. `auto` (default) inspects the YAML to decide.",
+        choices=["auto", "gitlab-ci", "github-actions", "jenkins"],
+        help="Pipeline platform. `auto` (default) inspects the file to decide.",
     )
     scan_parser.add_argument(
         "--policies", default=None,

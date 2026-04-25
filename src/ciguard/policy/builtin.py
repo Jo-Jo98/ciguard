@@ -287,4 +287,100 @@ BUILTIN_POLICIES: list[PolicyDefinition] = [
         tags=["runner", "isolation"],
         platforms=["github-actions"],
     ),
+
+    # -----------------------------------------------------------------------
+    # Jenkins Declarative Pipeline built-ins (v0.4.0).
+    # -----------------------------------------------------------------------
+    # Keyed off `JKN-*` rule IDs. Evaluated when `report.platform == "jenkins"`.
+
+    PolicyDefinition(
+        id="POL-JKN-001",
+        name="All Container Agent Images Must Be Pinned",
+        description=(
+            "Every `agent { docker { image '...' } }` (or kubernetes/dockerfile "
+            "agent) must reference an immutable digest. Bare or `:latest` tags "
+            "let the upstream image author swap the build environment between "
+            "runs without any change to the Jenkinsfile."
+        ),
+        severity=PolicySeverity.HIGH,
+        condition=PolicyCondition(
+            type="no_rule_findings",
+            rule_ids=["JKN-PIPE-001"],
+        ),
+        remediation=(
+            "Pin agent images to a digest, e.g. "
+            "`image 'ghcr.io/org/image@sha256:<digest>'`. Renovate / Dependabot "
+            "can keep the digest current with reviewable PRs."
+        ),
+        tags=["supply-chain", "integrity", "docker"],
+        platforms=["jenkins"],
+    ),
+    PolicyDefinition(
+        id="POL-JKN-002",
+        name="No Hardcoded Secrets in environment Blocks",
+        description=(
+            "`environment { … }` blocks must not contain literal secret values. "
+            "Jenkins ships a Credentials Provider precisely so secrets stay out "
+            "of source control — `KEY = credentials('id')` is the correct "
+            "binding form for any token, password, or signing key."
+        ),
+        severity=PolicySeverity.CRITICAL,
+        condition=PolicyCondition(
+            type="no_rule_findings",
+            rule_ids=["JKN-IAM-001"],
+        ),
+        remediation=(
+            "Replace literal values with `credentials('<id>')` and store the "
+            "actual secret in Manage Jenkins → Credentials, scoped to the "
+            "smallest folder/job that needs it. Rotate any value that has been "
+            "committed."
+        ),
+        tags=["secrets", "iam"],
+        platforms=["jenkins"],
+    ),
+    PolicyDefinition(
+        id="POL-JKN-003",
+        name="Top-Level Agent Must Be Constrained",
+        description=(
+            "`agent any` allows the build to land on any Jenkins executor — "
+            "including general-purpose nodes shared with other tenants. "
+            "Sensitive builds should pin to a labelled node, container, or "
+            "Kubernetes pod so a compromised build cannot reach unintended "
+            "infrastructure."
+        ),
+        severity=PolicySeverity.MEDIUM,
+        condition=PolicyCondition(
+            type="no_rule_findings",
+            rule_ids=["JKN-RUN-001"],
+        ),
+        remediation=(
+            "Replace `agent any` with `agent { label '<pool>' }`, "
+            "`agent { docker { image '<pinned>' } }`, or "
+            "`agent { kubernetes { … } }` for ephemeral per-build pods."
+        ),
+        tags=["runner", "isolation"],
+        platforms=["jenkins"],
+    ),
+    PolicyDefinition(
+        id="POL-JKN-004",
+        name="No Dangerous Shell Patterns in sh / bat / powershell Steps",
+        description=(
+            "Build steps must not pipe remote downloads into a shell "
+            "interpreter (`curl ... | bash`), eval untrusted input, or use "
+            "PowerShell IEX-style download cradles. Each is a single-link "
+            "supply-chain failure on the build agent."
+        ),
+        severity=PolicySeverity.HIGH,
+        condition=PolicyCondition(
+            type="no_rule_findings",
+            rule_ids=["JKN-SC-001"],
+        ),
+        remediation=(
+            "Download installers to disk, verify a SHA-256, then execute. "
+            "Better still, install via the agent's package manager from a "
+            "vetted internal repository."
+        ),
+        tags=["supply-chain", "shell"],
+        platforms=["jenkins"],
+    ),
 ]

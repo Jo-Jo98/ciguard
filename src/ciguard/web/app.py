@@ -29,6 +29,7 @@ from fastapi.templating import Jinja2Templates
 from ciguard.analyzer.engine import AnalysisEngine
 from ciguard.parser.github_actions import parse_file as auto_parse_file
 from ciguard.parser.gitlab_parser import GitLabCIParser
+from ciguard.parser.jenkinsfile import JenkinsfileParser, looks_like_jenkinsfile
 from ciguard.reporter.html_report import HTMLReporter
 from ciguard.web.scan_store import get_store
 
@@ -42,7 +43,7 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 app = FastAPI(
     title="ciguard",
     description="CI/CD Pipeline Security Auditor",
-    version="0.3.0",
+    version="0.4.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
 )
@@ -59,13 +60,15 @@ _reporter = HTMLReporter()
 @app.get("/api/health", tags=["api"])
 def api_health():
     """Health check — returns 200 when the service is ready."""
-    return {"status": "ok", "version": "0.3.0", "scans_in_memory": len(get_store())}
+    return {"status": "ok", "version": "0.4.0", "scans_in_memory": len(get_store())}
 
 
 @app.post("/api/scan", tags=["api"])
-async def api_scan(file: UploadFile = File(..., description="A GitLab CI .yml or GitHub Actions workflow file")):
-    """Upload and scan a pipeline file. Format (GitLab CI vs GitHub Actions)
-    is auto-detected from the YAML shape.
+async def api_scan(file: UploadFile = File(..., description="A GitLab CI .yml, GitHub Actions workflow, or Jenkinsfile (Declarative Pipeline)")):
+    """Upload and scan a pipeline file. Platform (GitLab CI / GitHub Actions /
+    Jenkins Declarative Pipeline) is auto-detected: filename or content sniff
+    promotes Jenkinsfiles ahead of YAML parsing, otherwise the YAML shape
+    distinguishes GitLab from GHA.
 
     Returns a ``scan_id`` and high-level summary. Use
     ``GET /api/report/{scan_id}`` for the full JSON report.
@@ -81,17 +84,32 @@ async def api_scan(file: UploadFile = File(..., description="A GitLab CI .yml or
             detail=f"File too large. Maximum is {GitLabCIParser.MAX_FILE_BYTES // 1024} KB.",
         )
 
-    # Write to temp file so the parser can stat/open it normally
+    # Preserve the original filename suffix so the Jenkinsfile heuristic
+    # can match by name (e.g. an upload literally named `Jenkinsfile`).
+    upload_name = Path(file.filename).name
     suffix = Path(file.filename).suffix or ".yml"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(content)
         tmp_path = Path(tmp.name)
 
+    # Symlink under the original name so `looks_like_jenkinsfile` can pick
+    # up the filename-only signal. Falls back to a content sniff regardless.
+    named_path = tmp_path.with_name(upload_name)
     try:
-        target = auto_parse_file(tmp_path)
+        named_path.symlink_to(tmp_path)
+    except (OSError, NotImplementedError):
+        named_path = tmp_path  # filesystem doesn't support symlinks; sniff still works
+
+    try:
+        if looks_like_jenkinsfile(named_path):
+            target = JenkinsfileParser().parse_file(named_path)
+        else:
+            target = auto_parse_file(named_path)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     finally:
+        if named_path != tmp_path:
+            named_path.unlink(missing_ok=True)
         tmp_path.unlink(missing_ok=True)
 
     report = _engine.analyse(target, pipeline_name=file.filename)
