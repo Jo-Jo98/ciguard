@@ -39,7 +39,7 @@ for v0.4 — the parser surfaces a parse warning rather than guessing.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
