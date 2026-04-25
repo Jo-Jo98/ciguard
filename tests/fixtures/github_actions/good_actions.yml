@@ -1,0 +1,67 @@
+# Well-secured GitHub Actions workflow — used as the labelled "should produce
+# zero findings" fixture for Phase 6 rule adaptation. Every choice here is
+# deliberate:
+#
+#   - All `uses:` references pin to a 40-char commit SHA (no mutable tag refs).
+#   - `permissions:` is least-privilege at the workflow level; jobs that need
+#     more elevate explicitly.
+#   - The deploy job declares an `environment:` so GitHub protection rules
+#     gate manual approval / required reviewers.
+#   - No hardcoded secrets — credentials come from `${{ secrets.* }}`.
+#   - Container image is pinned to a SHA digest.
+
+name: ship
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: "true"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/setup-node@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v4 (placeholder SHA — fixture purposes only)
+        with:
+          node-version: "20"
+      - run: |
+          npm ci
+          npm test
+
+  build_image:
+    runs-on: ubuntu-latest
+    needs: [test]
+    permissions:
+      contents: read
+      packages: write
+    container: ghcr.io/example/builder@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - run: |
+          ./build.sh
+          sha256sum dist/* > checksums.sha256
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [build_image]
+    environment:
+      name: production
+      url: https://app.example.com
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - name: Deploy
+        env:
+          DEPLOY_TOKEN: ${{ secrets.PROD_DEPLOY_TOKEN }}
+        run: ./deploy.sh production

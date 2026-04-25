@@ -1,0 +1,63 @@
+# Deliberately bad GitHub Actions workflow.
+#
+# Used as a labelled fixture: every misconfiguration here corresponds to a
+# rule we expect Slice 6's GHA-adapted analyzer to fire (Phase 6 will wire
+# rules; Phase 6 part 1 only validates the parser shape).
+
+name: deploy-prod
+
+on: [push, pull_request]
+
+# Excessive default permissions — every job inherits write-all on every scope.
+permissions: write-all
+
+env:
+  AWS_ACCESS_KEY_ID: "<EXAMPLE-NOT-A-REAL-AWS-ACCESS-KEY>"            # IAM-001 hardcoded secret
+  AWS_SECRET_ACCESS_KEY: "<EXAMPLE-NOT-A-REAL-AWS-SECRET-PLACEHOLDER>"  # IAM-001
+  DB_PASSWORD: "hunter2hunter2_demo"                                  # IAM-001
+  API_TOKEN: "<EXAMPLE-NOT-A-REAL-GITHUB-PAT>"                        # IAM-001
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # Tag refs are mutable — supply-chain risk (analogue of GitLab SC-002).
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install via curl-pipe-bash
+        # PIPE-003 / SC-001 — fetch-and-execute against unpinned URL.
+        run: |
+          curl -fsSL https://example.com/install.sh | bash
+          eval "$(some_dynamic_command)"
+
+  test:
+    runs-on: ubuntu-latest
+    needs: [build]
+    container: node:latest        # PIPE-001 — unpinned image
+    services:
+      docker:
+        image: docker:dind        # RUN-002 — privileged DinD service
+        options: --privileged
+    steps:
+      - uses: actions/checkout@main   # @main — branch ref, mutable
+      - run: npm test
+
+  deploy_prod:
+    runs-on: ubuntu-latest
+    needs: [test]
+    # No `environment:` block → no GitHub deployment-environment protection rules
+    # (analogue of GitLab DEP-001 / PIPE-004).
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy
+        env:
+          DEPLOY_TOKEN: "demo-only-not-a-real-secret"   # IAM-001
+        run: |
+          ./deploy.sh production
+
+  # Reusable workflow call without a SHA-pinned ref.
+  call-shared:
+    uses: example-org/shared-workflows/.github/workflows/release.yml@main
+    secrets: inherit
