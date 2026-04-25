@@ -206,6 +206,47 @@ class TestConditionTypes:
 
 
 # ---------------------------------------------------------------------------
+# Include-template detection (regression: POL-003 + SC-003 false-negative)
+# ---------------------------------------------------------------------------
+
+class TestIncludeTemplateScanningDetection:
+    """`include: template: Security/...gitlab-ci.yml` is a valid way to add
+    SAST / Secret-Detection / Dependency-Scanning to a pipeline. The scanning
+    rules and the `has_security_scanning` policy check must recognise this,
+    not just job-name / script-line text."""
+
+    def setup_method(self):
+        self.pipeline = parser.parse_file(FIXTURES / "realworld_demo.gitlab-ci.yml")
+        self.report   = engine.analyse(self.pipeline, "realworld_demo.gitlab-ci.yml")
+
+    def test_sc_003_not_fired_when_dependency_scanning_template_included(self):
+        sc_003 = [f for f in self.report.findings if f.rule_id == "SC-003"]
+        assert sc_003 == [], (
+            "SC-003 should not fire when "
+            "`include: template: Security/Dependency-Scanning.gitlab-ci.yml` is present"
+        )
+
+    def test_has_security_scanning_passes_with_sast_and_secret_templates(self):
+        policy = PolicyDefinition(
+            id="TEST-INC", name="Test", description="Test",
+            severity=PolicySeverity.HIGH,
+            condition=PolicyCondition(type="pipeline_check", check="has_security_scanning"),
+            remediation="-",
+        )
+        pr = evaluator.evaluate([policy], self.pipeline, self.report)
+        assert pr.results[0].passed, (
+            "has_security_scanning should pass when SAST + Secret-Detection "
+            "templates are pulled in via `include:`"
+        )
+
+    def test_include_text_flattens_template_refs(self):
+        text = self.pipeline.include_text()
+        assert "Security/SAST.gitlab-ci.yml" in text
+        assert "Security/Secret-Detection.gitlab-ci.yml" in text
+        assert "Security/Dependency-Scanning.gitlab-ci.yml" in text
+
+
+# ---------------------------------------------------------------------------
 # Custom policy loader
 # ---------------------------------------------------------------------------
 

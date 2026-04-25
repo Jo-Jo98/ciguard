@@ -17,17 +17,20 @@ from .models import PolicyCondition, PolicyDefinition, PolicyReport, PolicyResul
 # ---------------------------------------------------------------------------
 
 def _check_has_security_scanning(pipeline: Pipeline, report: Report) -> bool:
-    """True if any job runs a SAST/DAST/dependency scan tool."""
+    """True if any job runs a SAST/DAST/secret/dependency scan tool, or
+    the pipeline includes a GitLab Security/* template that does."""
     import re
     scan_re = re.compile(
         r"(sast|dast|trivy|snyk|grype|syft|retire|pip.audit|bundler.audit|"
-        r"dependency.scan|software.composition|owasp|semgrep|bandit|safety)",
+        r"dependency.scan|software.composition|owasp|semgrep|bandit|safety|"
+        r"secret.detection|gitleaks|trufflehog|detect.secrets|gemnasium)",
         re.I,
     )
     all_text = " ".join(
         [j.name for j in pipeline.jobs]
         + pipeline.stages
         + [line for j in pipeline.jobs for line in j.all_scripts()]
+        + [pipeline.include_text()]
     )
     return bool(scan_re.search(all_text))
 

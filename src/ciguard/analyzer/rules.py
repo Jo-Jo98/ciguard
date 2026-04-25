@@ -988,9 +988,15 @@ def rule_sc_003(pipeline: Pipeline) -> List[Finding]:
         nist=["ID.SC-2", "ID.RA-1"],
     )
 
+    # Include-only manifests (root file is just `include:` directives) parse
+    # to zero jobs locally; we can't see what the included files do, so
+    # firing SC-003 here is unreliable noise. Match ART-003's pattern.
+    if not pipeline.jobs:
+        return findings
+
     scan_keywords = re.compile(
         r"(dependency.scan|dep.scan|sca\b|software.composition|"
-        r"trivy|grype|syft|snyk|retire\.js|audit|owasp.dep)",
+        r"trivy|grype|syft|snyk|retire\.js|audit|owasp.dep|gemnasium)",
         re.I,
     )
 
@@ -998,6 +1004,7 @@ def rule_sc_003(pipeline: Pipeline) -> List[Finding]:
         [j.name for j in pipeline.jobs]
         + pipeline.stages
         + [line for j in pipeline.jobs for line in j.all_scripts()]
+        + [pipeline.include_text()]
     )
 
     if not scan_keywords.search(all_text):

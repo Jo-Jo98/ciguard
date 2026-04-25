@@ -169,8 +169,26 @@ class Pipeline(BaseModel):
     def has_scanning_stage(self) -> bool:
         """True if pipeline has any security/dependency scanning."""
         scan_keywords = {"sast", "dast", "scan", "dependency", "sca", "audit", "security"}
-        all_text = " ".join(self.stages + [j.name for j in self.jobs]).lower()
+        all_text = " ".join(
+            self.stages + [j.name for j in self.jobs] + [self.include_text()]
+        ).lower()
         return any(k in all_text for k in scan_keywords)
+
+    def include_text(self) -> str:
+        """Flatten all include directive values to a single string for keyword matching.
+
+        GitLab `include:` items can be `local`, `remote`, `template`, `project`/`file`,
+        or `component` references. A pipeline that pulls in `Security/SAST.gitlab-ci.yml`
+        via `include: template:` has scanning even if no job mentions it by name.
+        """
+        parts: List[str] = []
+        for entry in self.includes:
+            for value in entry.values():
+                if isinstance(value, str):
+                    parts.append(value)
+                elif isinstance(value, list):
+                    parts.extend(str(v) for v in value)
+        return " ".join(parts)
 
 
 # ---------------------------------------------------------------------------

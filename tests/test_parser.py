@@ -370,6 +370,43 @@ class TestGoodPipeline:
 
 
 # ---------------------------------------------------------------------------
+# Rule engine: include-only pipelines (root file is just `include:` directives)
+# ---------------------------------------------------------------------------
+
+class TestIncludeOnlyPipeline:
+    """When a root .gitlab-ci.yml has 0 jobs and only `include:` directives,
+    text-based global rules (SC-003) cannot reliably evaluate the included
+    files — so they must not fire."""
+
+    def setup_method(self):
+        import textwrap, tempfile, os
+        yaml = textwrap.dedent("""
+            stages: [build, test, publish]
+            include:
+              - local: '.gitlab/ci/build.gitlab-ci.yml'
+              - local: '.gitlab/ci/test.gitlab-ci.yml'
+        """)
+        fd, path = tempfile.mkstemp(suffix=".yml")
+        os.write(fd, yaml.encode()); os.close(fd)
+        try:
+            p = parser.parse_file(path)
+            self.pipeline = p
+            self.report = engine.analyse(p, "include_only.yml")
+        finally:
+            os.unlink(path)
+
+    def test_zero_jobs_parsed(self):
+        assert len(self.pipeline.jobs) == 0
+        assert len(self.pipeline.includes) == 2
+
+    def test_sc_003_does_not_fire(self):
+        sc_003 = [f for f in self.report.findings if f.rule_id == "SC-003"]
+        assert sc_003 == [], (
+            "SC-003 cannot reliably evaluate include-only pipelines and must not fire"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Rule engine: typical pipeline
 # ---------------------------------------------------------------------------
 
