@@ -30,11 +30,23 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from ciguard.mcp.server import (
     SERVER_NAME,
+    _MCP_AVAILABLE,
     _all_tools,
     _dispatch,
     build_server,
 )
 from ciguard.rule_catalog import get_catalog, reset_catalog
+
+
+# Gate the SDK-dependent tests on the optional [mcp] extra. The dispatch
+# tests work without the SDK (they exercise pure Python handlers), but
+# anything that touches mcp.types.Tool or mcp.server.Server requires the
+# package. Skipping rather than failing when the extra isn't installed
+# keeps `pytest` clean for users who didn't `pip install ciguard[mcp]`.
+_requires_sdk = pytest.mark.skipif(
+    not _MCP_AVAILABLE,
+    reason="MCP SDK not installed (optional extra: pip install 'ciguard[mcp]')",
+)
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -78,6 +90,7 @@ class TestRuleCatalog:
 
 
 class TestToolRegistry:
+    @_requires_sdk
     def test_all_five_tools_registered(self):
         names = {t.name for t in _all_tools()}
         assert names == {
@@ -88,12 +101,14 @@ class TestToolRegistry:
             "ciguard.list_rules",
         }
 
+    @_requires_sdk
     def test_every_tool_has_schema_with_required_fields(self):
         for tool in _all_tools():
             assert tool.description, f"{tool.name} missing description"
             assert tool.inputSchema, f"{tool.name} missing inputSchema"
             assert tool.inputSchema.get("type") == "object"
 
+    @_requires_sdk
     def test_build_server_returns_server_instance(self):
         server = build_server()
         assert server.name == SERVER_NAME

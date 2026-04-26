@@ -34,7 +34,10 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          # Install with [mcp] extra so test_mcp_server.py exercises the real
+          # Tool / Server types (the MCP SDK is an optional extra; absence
+          # leaves _MCP_AVAILABLE=False and registry tests would skip).
+          pip install -e ".[dev,mcp]"
       - name: Run tests
         run: pytest tests/ -v
       - name: Validate labelled fixtures (PRD acceptance criteria 1 & 2)
