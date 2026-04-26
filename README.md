@@ -122,6 +122,38 @@ Weighted score across 6 categories — each contributes a percentage of the over
 
 **Grades:** A (90–100), B (80–89), C (70–79), D (60–69), F (<60).
 
+## Suppressing findings (`.ciguardignore`)
+
+Drop a `.ciguardignore` YAML file at your repo root to suppress findings that you've reviewed and accepted. Every entry **must** include a written `reason` — naked rule-id-only disables are rejected by design (auditors need to know *why*).
+
+```yaml
+# .ciguardignore
+- rule_id: PIPE-001
+  location: deploy_prod          # optional — substring match on the finding location
+  reason: We pin to digest in the parent template; this image is intentionally tag-tracked.
+  expires: 2026-12-31             # optional — emits a warning when the date passes (still suppresses)
+
+- rule_id: SCA-EOL-003
+  reason: Internal mirror keeps Python 3.9 alive past upstream EOL until 2026 Q3.
+```
+
+Suppressed findings still appear in HTML / PDF / JSON / SARIF reports under a dedicated **Suppressed** section so the audit trail is preserved — they just don't contribute to the risk score or trigger CI failure. Override discovery with `--ignore-file <path>`; disable entirely with `--no-ignore-file`.
+
+## Pre-commit hook
+
+Install ciguard into your `pre-commit` chain to scan pipeline files on every commit:
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/Jo-Jo98/ciguard
+    rev: v0.7.0
+    hooks:
+      - id: ciguard
+```
+
+The hook auto-matches `.gitlab-ci.yml`, `.github/workflows/*.yml`, `Jenkinsfile`, and `*.groovy`. Blocks the commit on Critical / High findings (exit codes `2` / `1`).
+
 ## Running with Docker
 
 ```bash

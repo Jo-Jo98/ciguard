@@ -9,10 +9,12 @@ Sections:
   2. Executive Summary — risk score dashboard + key metrics
   3. Category Scores — bar chart per category
   4. Pipeline Map — stage flow
-  5. Findings by Severity — detailed findings table
-  6. Policy Report — pass/fail per policy (if present)
-  7. Compliance Mapping — ISO 27001 / SOC 2 / NIST references
-  8. Remediation Roadmap — prioritised action list
+  5. Delta vs Baseline — new/resolved tiles + tables (when --baseline used; v0.7+)
+  6. Findings by Severity — detailed findings table
+  7. Policy Report — pass/fail per policy (if present)
+  8. Suppressed — .ciguardignore audit trail (when present; v0.7+)
+  9. Compliance Mapping — ISO 27001 / SOC 2 / NIST references
+ 10. Remediation Roadmap — prioritised action list
 """
 from __future__ import annotations
 
@@ -96,9 +98,13 @@ class PDFReporter:
         story += self._executive_summary(report, styles)
         story += self._category_scores(report, styles)
         story += self._pipeline_map(report, styles)
+        if report.delta is not None:
+            story += self._delta_section(report, styles)
         story += self._findings_table(report, styles)
         if report.policy_report:
             story += self._policy_section(report, styles)
+        if report.suppressed:
+            story += self._suppressed_section(report, styles)
         story += self._compliance_section(report, styles)
         story += self._remediation_roadmap(report, styles)
 
@@ -353,6 +359,147 @@ class PDFReporter:
     # ------------------------------------------------------------------
     # Findings table
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Delta vs Baseline (v0.7+, mirrors HTML "Delta vs Baseline" section)
+    # ------------------------------------------------------------------
+
+    def _delta_section(self, report: Report, styles) -> list:
+        d = report.delta
+        elements = [PageBreak(),
+                    Paragraph("Delta vs Baseline", styles["H1"]),
+                    HRFlowable(width="100%", thickness=1, color=_MID_GREY),
+                    Spacer(1, 0.2*cm)]
+
+        elements.append(Paragraph(
+            f"Baseline written {_esc(d.baseline_timestamp)} by ciguard "
+            f"{_esc(d.baseline_scanner_version)}",
+            styles["Small"]
+        ))
+        elements.append(Spacer(1, 0.3*cm))
+
+        # 4-tile summary: New | Resolved | Unchanged | Score Δ
+        score_str = (
+            f"+{d.score_delta}" if d.score_delta > 0
+            else f"{d.score_delta}"
+        )
+        score_colour = (
+            _PASS_GREEN if d.score_delta > 0
+            else _FAIL_RED if d.score_delta < 0
+            else _SUB_TEXT
+        )
+        new_colour = _FAIL_RED if d.new else _SUB_TEXT
+        resolved_colour = _PASS_GREEN if d.resolved else _SUB_TEXT
+
+        tile_table = Table(
+            [
+                ["New", "Resolved", "Unchanged", "Score Δ"],
+                [str(len(d.new)), str(len(d.resolved)),
+                 str(len(d.unchanged)), score_str],
+            ],
+            colWidths=[4*cm, 4*cm, 4*cm, 4*cm],
+        )
+        tile_table.setStyle(TableStyle([
+            ("BACKGROUND",     (0, 0), (-1, 0), _DARK_BG),
+            ("TEXTCOLOR",      (0, 0), (-1, 0), colors.white),
+            ("FONTNAME",       (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE",       (0, 0), (-1, 0), 10),
+            ("FONTSIZE",       (0, 1), (-1, 1), 18),
+            ("FONTNAME",       (0, 1), (-1, 1), "Helvetica-Bold"),
+            ("ALIGN",          (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN",         (0, 0), (-1, -1), "MIDDLE"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, 1), [_LIGHT_GREY]),
+            ("TEXTCOLOR",      (0, 1), (0, 1), new_colour),
+            ("TEXTCOLOR",      (1, 1), (1, 1), resolved_colour),
+            ("TEXTCOLOR",      (3, 1), (3, 1), score_colour),
+            ("GRID",           (0, 0), (-1, -1), 0.5, _MID_GREY),
+            ("ROWHEIGHT",      (0, 1), (-1, 1), 1.2*cm),
+        ]))
+        elements.append(tile_table)
+        elements.append(Spacer(1, 0.5*cm))
+
+        if d.new:
+            elements.append(Paragraph(
+                f'<font color="{_FAIL_RED.hexval()}"><b>New since baseline '
+                f"({len(d.new)})</b></font>",
+                styles["H3"]
+            ))
+            elements.append(Spacer(1, 0.2*cm))
+            elements.append(self._delta_table(d.new))
+            elements.append(Spacer(1, 0.4*cm))
+
+        if d.resolved:
+            elements.append(Paragraph(
+                f'<font color="{_PASS_GREEN.hexval()}"><b>Resolved since baseline '
+                f"({len(d.resolved)})</b></font>",
+                styles["H3"]
+            ))
+            elements.append(Spacer(1, 0.2*cm))
+            elements.append(self._delta_table(d.resolved))
+            elements.append(Spacer(1, 0.4*cm))
+
+        if not d.new and not d.resolved:
+            elements.append(Paragraph(
+                f'<i>No changes since baseline — {len(d.unchanged)} finding'
+                f"{'s' if len(d.unchanged) != 1 else ''} unchanged.</i>",
+                styles["Small"]
+            ))
+
+        return elements
+
+    def _delta_table(self, findings: list) -> Table:
+        rows = [["Severity", "Rule", "Name", "Location"]]
+        for f in findings:
+            rows.append([
+                f.severity.value,
+                f.rule_id,
+                _esc(f.name)[:50],
+                _esc(f.location)[:32],
+            ])
+        tbl = Table(rows, colWidths=[2.3*cm, 2.3*cm, 7.5*cm, 4*cm])
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), _DARK_BG),
+            ("TEXTCOLOR",  (0, 0), (-1, 0), colors.white),
+            ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE",   (0, 0), (-1, -1), 8),
+            ("ALIGN",      (0, 0), (-1, 0), "CENTER"),
+            ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_LIGHT_GREY, colors.white]),
+            ("GRID",       (0, 0), (-1, -1), 0.3, _MID_GREY),
+        ]))
+        return tbl
+
+    # ------------------------------------------------------------------
+    # Suppressed findings (v0.7+, .ciguardignore audit trail)
+    # ------------------------------------------------------------------
+
+    def _suppressed_section(self, report: Report, styles) -> list:
+        elements = [PageBreak(),
+                    Paragraph("Suppressed Findings", styles["H1"]),
+                    HRFlowable(width="100%", thickness=1, color=_MID_GREY),
+                    Spacer(1, 0.3*cm)]
+
+        elements.append(Paragraph(
+            f"<b>{len(report.suppressed)}</b> finding"
+            f"{'s' if len(report.suppressed) != 1 else ''} suppressed by "
+            f"<i>{_esc(report.ignore_file_path or '.ciguardignore')}</i>. "
+            "These do not contribute to the risk score or trigger CI failure; "
+            "they are listed here for audit purposes.",
+            styles["Small"]
+        ))
+        elements.append(Spacer(1, 0.3*cm))
+
+        if report.ignore_warnings:
+            for w in report.ignore_warnings:
+                elements.append(Paragraph(
+                    f'<font color="{_HIGH.hexval()}"><b>! Expired:</b></font> '
+                    f"{_esc(w)}",
+                    styles["Small"]
+                ))
+            elements.append(Spacer(1, 0.3*cm))
+
+        elements.append(self._delta_table(report.suppressed))
+        return elements
 
     def _findings_table(self, report: Report, styles) -> list:
         elements = [PageBreak(),

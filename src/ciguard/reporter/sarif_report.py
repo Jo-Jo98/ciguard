@@ -191,6 +191,27 @@ class SARIFReporter:
                     baseline_state="absent",
                 ))
 
+        # Suppressed findings (.ciguardignore, v0.7+) — render as results
+        # carrying SARIF's native `suppressions` array. GitHub Code Scanning
+        # honours this and auto-closes the alert with a "Suppressed" status,
+        # which is exactly the audit-trail semantic we want.
+        if report.suppressed:
+            for f in report.suppressed:
+                if f.rule_id not in rules_by_id:
+                    rules_by_id[f.rule_id] = _rule_definition(f)
+                suppressed_result = _result(
+                    f,
+                    artifact_uri=report.pipeline_name,
+                    baseline_state=baseline_state_by_fp.get(f.fingerprint),
+                )
+                suppressed_result["suppressions"] = [{
+                    "kind": "external",
+                    "justification": (
+                        f"Suppressed by {report.ignore_file_path or '.ciguardignore'}"
+                    ),
+                }]
+                results.append(suppressed_result)
+
         sarif: Dict[str, Any] = {
             "$schema": SARIF_SCHEMA,
             "version": SARIF_VERSION,

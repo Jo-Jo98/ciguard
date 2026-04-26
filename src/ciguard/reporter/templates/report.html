@@ -967,6 +967,50 @@
 </div>
 
 <!-- ======================================
+     SUPPRESSED (.ciguardignore, v0.7+)
+======================================= -->
+{% if report.suppressed %}
+<div class="section" id="suppressed">
+  <div class="section-title">
+    <span class="icon">&#128274;</span>
+    Suppressed
+    <span style="font-size:13px; font-weight:400; color:var(--text-muted);">({{ report.suppressed | length }} hidden by {{ report.ignore_file_path or '.ciguardignore' }})</span>
+  </div>
+
+  <p style="color:var(--text-muted); font-size:13px; margin-bottom:12px;">
+    These findings were detected but suppressed by an explicit entry in your <code>.ciguardignore</code> file. They are listed here for audit purposes — they do <strong>not</strong> contribute to the risk score or trigger CI failure.
+  </p>
+
+  {% if report.ignore_warnings %}
+  <div style="background:rgba(255,184,0,0.08); border:1px solid rgba(255,184,0,0.25); border-radius:8px; padding:12px 16px; margin-bottom:16px; font-size:13px;">
+    <strong style="color:#ffb800;">Expired suppressions detected</strong>
+    <ul style="margin:8px 0 0 16px; padding:0;">
+      {% for warning in report.ignore_warnings %}
+      <li style="color:var(--text-muted); margin:4px 0;">{{ warning }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <table class="findings-table">
+    <thead>
+      <tr><th>Severity</th><th>Rule</th><th>Name</th><th>Location</th></tr>
+    </thead>
+    <tbody>
+      {% for f in report.suppressed %}
+      <tr>
+        <td><span class="severity-pill {{ f.severity.value | severity_class }}">{{ f.severity.value }}</span></td>
+        <td><code>{{ f.rule_id }}</code></td>
+        <td>{{ f.name }}</td>
+        <td><code>{{ f.location }}</code></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<!-- ======================================
      COMPLIANCE
 ======================================= -->
 <div class="section" id="compliance">

@@ -223,6 +223,33 @@ class TestSARIFBaselineState:
         states = {r["baselineState"] for r in sarif["runs"][0]["results"]}
         assert states == {"new"}
 
+    def test_suppressed_findings_carry_native_suppressions_array(self, tmp_path):
+        """Findings on `report.suppressed` (v0.7+ .ciguardignore) must be
+        emitted as SARIF results with a native `suppressions[]` entry so
+        GitHub Code Scanning auto-closes them with a 'Suppressed' label
+        rather than counting them as active alerts."""
+        p = GitLabCIParser().parse_file(FIXTURES / "bad_pipeline.yml")
+        report = AnalysisEngine(enable_sca=False).analyse(p, "bad_pipeline.yml")
+
+        # Move the first 2 findings into the suppressed bucket as if a
+        # .ciguardignore had matched them.
+        report.suppressed = report.findings[:2]
+        report.findings = report.findings[2:]
+        report.ignore_file_path = ".ciguardignore"
+
+        sarif = json.loads(SARIFReporter().render(report))
+        results = sarif["runs"][0]["results"]
+
+        suppressed_results = [r for r in results if "suppressions" in r]
+        assert len(suppressed_results) == 2
+        for r in suppressed_results:
+            assert r["suppressions"][0]["kind"] == "external"
+            assert ".ciguardignore" in r["suppressions"][0]["justification"]
+
+        # Active (non-suppressed) findings must NOT carry suppressions.
+        active = [r for r in results if "suppressions" not in r]
+        assert len(active) == len(report.findings)
+
     def test_resolved_findings_appear_as_absent_results(self, tmp_path):
         from ciguard.analyzer.baseline import compute_delta, load_baseline, write_baseline
 

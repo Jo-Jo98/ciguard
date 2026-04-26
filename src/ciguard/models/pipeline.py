@@ -345,6 +345,9 @@ class Report(BaseModel):
     scanner_findings: List[Any] = Field(default_factory=list)  # List[ScannerFinding]
     delta: Optional[Delta] = None         # populated when --baseline supplied (v0.5+)
     scanner_version: str = ""             # ciguard version that produced this report (v0.5+)
+    suppressed: List[Finding] = Field(default_factory=list)  # findings hidden by .ciguardignore (v0.7+)
+    ignore_warnings: List[str] = Field(default_factory=list) # expired-suppression notes (v0.7+)
+    ignore_file_path: Optional[str] = None                   # source path of applied ignore file (v0.7+)
 
     def findings_by_severity(self, severity: Severity) -> List[Finding]:
         return [f for f in self.findings if f.severity == severity]

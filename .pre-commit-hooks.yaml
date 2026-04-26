@@ -1,0 +1,12 @@
+- id: ciguard
+  name: ciguard — CI/CD pipeline security scan
+  description: >-
+    Scans CI/CD pipeline configuration files (.gitlab-ci.yml, GitHub Actions
+    workflows, Jenkinsfiles) for security misconfigurations, supply chain risks,
+    and compliance gaps before they get committed.
+  entry: ciguard scan
+  language: python
+  files: '(\.gitlab-ci\.yml|\.github/workflows/.*\.ya?ml|.*[Jj]enkinsfile.*|.*\.groovy)$'
+  require_serial: true
+  pass_filenames: true
+  minimum_pre_commit_version: '3.0.0'

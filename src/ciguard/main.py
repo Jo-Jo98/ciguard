@@ -216,6 +216,61 @@ def cmd_scan(args: argparse.Namespace) -> int:
             except Exception as exc:
                 print(f"{_YELLOW}SKIP{_RESET}  ({exc})")
 
+    # ---- Apply .ciguardignore suppressions (v0.7) — runs before baseline
+    # diff so suppressed findings don't show up as "new" against an old
+    # baseline that pre-dated the suppression. Suppressed findings are
+    # preserved on `report.suppressed` for audit, but removed from
+    # `report.findings` so all downstream logic (severity counts, exit
+    # codes, baseline comparison, reporters) treats them as resolved.
+    if not getattr(args, "no_ignore_file", False):
+        from ciguard.ignore import (
+            apply_ignores,
+            discover_ignore_file,
+            load_ignore_file,
+        )
+
+        ignore_path: Optional[Path] = None
+        if args.ignore_file:
+            ignore_path = Path(args.ignore_file)
+            if not ignore_path.exists():
+                print(
+                    f"  {_YELLOW}Warning:{_RESET} --ignore-file {ignore_path} "
+                    f"does not exist; continuing without suppressions.",
+                    file=sys.stderr,
+                )
+                ignore_path = None
+        else:
+            ignore_path = discover_ignore_file(input_path)
+
+        if ignore_path is not None:
+            try:
+                load_result = load_ignore_file(ignore_path)
+            except ValueError as exc:
+                print(f"  {_RED}Error:{_RESET} {exc}", file=sys.stderr)
+                return 1
+            if load_result.rules:
+                kept, suppressed, expired_warnings = apply_ignores(
+                    report.findings, load_result.rules
+                )
+                report.findings = kept
+                report.suppressed = suppressed
+                report.ignore_warnings = expired_warnings
+                report.ignore_file_path = str(ignore_path)
+                # Recompute summary + risk score so the post-suppression
+                # posture is reflected in terminal output, exit code, and
+                # baseline diff. Reuses the same engine instance for SCA
+                # client + flag consistency.
+                report.summary = engine._build_summary(report.findings)
+                report.risk_score = engine._calculate_risk(report.findings)
+                if suppressed:
+                    print(
+                        f"  {_DIM}↓{_RESET} {len(suppressed)} finding"
+                        f"{'s' if len(suppressed) != 1 else ''} suppressed by "
+                        f"{ignore_path.name}"
+                    )
+                for w in expired_warnings:
+                    print(f"  {_YELLOW}Warning:{_RESET} {w}", file=sys.stderr)
+
     # ---- Baseline diff (v0.5)
     baseline_path: Optional[Path] = None
     if args.baseline:
@@ -320,7 +375,9 @@ def cmd_scan(args: argparse.Namespace) -> int:
             new_above = report.delta.new_at_or_above(threshold)
             return 1 if new_above else 0
 
-    return 2 if crits > 0 else (1 if highs > 0 else 0)
+    final_crits = report.summary["by_severity"].get("Critical", 0)
+    final_highs = report.summary["by_severity"].get("High", 0)
+    return 2 if final_crits > 0 else (1 if final_highs > 0 else 0)
 
 
 def cmd_baseline(args: argparse.Namespace) -> int:
@@ -458,8 +515,15 @@ def main() -> int:
 
     scan_parser = subparsers.add_parser("scan", help="Scan a pipeline file")
     scan_parser.add_argument(
-        "--input", "-i", required=True,
+        "--input", "-i", default=None,
         help="Path to the pipeline YAML file (.gitlab-ci.yml or .github/workflows/*.yml)."
+    )
+    scan_parser.add_argument(
+        "files", nargs="*",
+        help="Positional pipeline file path(s). When provided, --input is "
+             "ignored. Multiple paths are scanned in sequence (used by the "
+             "pre-commit hook entry). Exit code is the worst code across the "
+             "batch (Critical > High > clean).",
     )
     scan_parser.add_argument(
         "--output", "-o", default=None,
@@ -500,6 +564,20 @@ def main() -> int:
         help="Disable network lookups for SCA enrichment (endoflife.date EOL "
              "data). Uses on-disk cache only. Required for air-gapped CI "
              "environments. Cache lives at `~/.ciguard/cache/` by default.",
+    )
+
+    # ---- .ciguardignore flags (v0.7)
+    scan_parser.add_argument(
+        "--ignore-file", default=None,
+        help="Path to a .ciguardignore YAML file. If omitted, ciguard walks "
+             "up from the input file looking for one (stops at .git or root). "
+             "Every entry must include a written `reason` — naked rule-id "
+             "disables are rejected by design. See the README for format.",
+    )
+    scan_parser.add_argument(
+        "--no-ignore-file", action="store_true", default=False,
+        help="Disable .ciguardignore discovery and processing entirely. "
+             "Useful for verifying baseline posture without suppressions.",
     )
 
     # ---- Baseline / delta flags (v0.5)
@@ -548,6 +626,25 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.command == "scan":
+        # Positional file paths take precedence over --input. Used by the
+        # pre-commit hook entry, which appends matched filenames after the
+        # command. Multiple paths → sequential scans, worst exit code wins.
+        files = list(getattr(args, "files", []) or [])
+        if files:
+            worst_rc = 0
+            for path in files:
+                args.input = path
+                rc = cmd_scan(args)
+                if rc > worst_rc:
+                    worst_rc = rc
+            return worst_rc
+        if args.input is None:
+            print(
+                f"{_RED}Error:{_RESET} `ciguard scan` requires --input or a "
+                "positional file path.",
+                file=sys.stderr,
+            )
+            return 1
         return cmd_scan(args)
     elif args.command == "baseline":
         return cmd_baseline(args)
