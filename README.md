@@ -122,6 +122,63 @@ Weighted score across 6 categories — each contributes a percentage of the over
 
 **Grades:** A (90–100), B (80–89), C (70–79), D (60–69), F (<60).
 
+## MCP server (AI-native integration)
+
+ciguard ships an optional **Model Context Protocol** server that exposes its scanning capabilities as tools any MCP-compatible AI client (Claude Desktop, Claude Code, Cursor, VS Code MCP extensions) can invoke.
+
+```bash
+pip install 'ciguard[mcp]'
+```
+
+Five tools are registered:
+
+| Tool | Purpose |
+|------|---------|
+| `ciguard.scan` | Scan a single pipeline file. Returns the full Report. |
+| `ciguard.scan_repo` | Walk a directory, discover every pipeline file, scan all. Aggregated severity + per-file summary. |
+| `ciguard.explain_rule` | Return canonical metadata for a rule (name / severity / remediation / compliance). |
+| `ciguard.diff_baseline` | Run a scan + compute the v0.5 baseline delta. New / resolved / unchanged + score Δ. |
+| `ciguard.list_rules` | Enumerate the catalog. Optional `platform` / `severity` filters. |
+
+### Claude Desktop
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "ciguard": {
+      "command": "ciguard",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+### Cursor / VS Code MCP extension
+
+```json
+{
+  "mcp.servers": {
+    "ciguard": { "command": "ciguard", "args": ["mcp"] }
+  }
+}
+```
+
+### Why this matters
+
+Unlocks workflows like *"Scan my pipeline and explain the most critical finding"* (model chains `scan` + `explain_rule`), *"Compare current scan against baseline and draft a PR description"* (model chains `scan` + `diff_baseline`), *"Which of my files would benefit from a manual approval gate?"* (model calls `scan_repo` and reasons over the response). ciguard becomes a building block for AI agents, not just a CLI.
+
+### Disabling MCP for managed devices (`CIGUARD_MCP_DISABLED`)
+
+Corporate environments standardising on a centralised MCP gateway can prevent individual devs from running a local ciguard MCP server by setting:
+
+```bash
+export CIGUARD_MCP_DISABLED=1
+```
+
+When set to `1` / `true` / `yes` / `on` (case-insensitive), `ciguard mcp` exits with a clear policy message and a non-zero exit code before starting the server. Push via MDM (Jamf / Intune), `/etc/environment`, Group Policy, or shell profile to enforce fleet-wide. Unset or any other value → MCP runs normally.
+
 ## Suppressing findings (`.ciguardignore`)
 
 Drop a `.ciguardignore` YAML file at your repo root to suppress findings that you've reviewed and accepted. Every entry **must** include a written `reason` — naked rule-id-only disables are rejected by design (auditors need to know *why*).

@@ -601,6 +601,22 @@ def main() -> int:
              "all severity-based exit codes (returns 0 unless an error occurred).",
     )
 
+    # ---- `mcp` subcommand (v0.8.0): launch the MCP stdio server. No CLI
+    # output (would corrupt the stdio protocol). Requires the optional
+    # `mcp` extra: `pip install 'ciguard[mcp]'`. Exits non-zero with a
+    # clear message if the extra isn't installed.
+    mcp_parser = subparsers.add_parser(
+        "mcp",
+        help="Launch the ciguard Model Context Protocol server (stdio "
+             "transport). Exposes scan / scan_repo / explain_rule / "
+             "diff_baseline / list_rules tools to MCP-compatible AI "
+             "clients (Claude Desktop, Claude Code, Cursor). "
+             "Requires `pip install 'ciguard[mcp]'`.",
+    )
+    # No flags currently — stdio is the only supported transport. Future
+    # SSE / HTTP transports would add flags here.
+    del mcp_parser  # silence unused; argparse keeps a reference internally
+
     # ---- `baseline` subcommand: write a baseline from a fresh scan, no report.
     baseline_parser = subparsers.add_parser(
         "baseline",
@@ -648,6 +664,40 @@ def main() -> int:
         return cmd_scan(args)
     elif args.command == "baseline":
         return cmd_baseline(args)
+    elif args.command == "mcp":
+        # Enterprise gate (v0.8.0). Sysadmins managing corporate fleets can
+        # set CIGUARD_MCP_DISABLED=1 (via MDM / Group Policy / shell profile)
+        # to prevent individual devs from running a local ciguard MCP server.
+        # Common rationale: the org standardises on a centralised MCP
+        # gateway that proxies, audits, and authorises tool traffic — local
+        # MCP servers would bypass that control plane.
+        import os
+        disabled_raw = os.environ.get("CIGUARD_MCP_DISABLED", "").strip().lower()
+        if disabled_raw in {"1", "true", "yes", "on"}:
+            print(
+                f"{_RED}Error:{_RESET} ciguard MCP server is disabled by "
+                "policy (CIGUARD_MCP_DISABLED is set in this environment).",
+                file=sys.stderr,
+            )
+            print(
+                f"  {_DIM}Contact your administrator if you need MCP access. "
+                f"This typically means the org has standardised on a "
+                f"centralised MCP gateway.{_RESET}",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            from ciguard.mcp.server import run_stdio
+        except ImportError as exc:
+            print(
+                f"{_RED}Error:{_RESET} MCP support requires the optional "
+                "extra. Install with: pip install 'ciguard[mcp]'",
+                file=sys.stderr,
+            )
+            print(f"  {exc}", file=sys.stderr)
+            return 1
+        run_stdio()
+        return 0
     else:
         parser.print_help()
         return 0
