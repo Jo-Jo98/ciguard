@@ -3,6 +3,32 @@
 All notable changes to `ciguard` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.0] — 2026-04-26
+
+**Strategic differentiator release.** ciguard now ships a Model Context Protocol server, exposing its scanning capabilities as tools any AI client (Claude Desktop, Claude Code, Cursor, VS Code MCP extensions) can invoke. First-mover positioning while the AI-native devsecops space is empty.
+
+### Added
+- **MCP server (`pip install 'ciguard[mcp]'`)** at `src/ciguard/mcp/server.py`. Stdio transport (the standard for local MCP servers). Five tools registered:
+  - `ciguard.scan(file_path, platform, offline, ignore_file, no_ignore_file)` — scan a single pipeline file, return the full Report dict (findings / risk_score / summary / suppressed / etc.)
+  - `ciguard.scan_repo(repo_path, fail_on, offline, no_ignore_file)` — auto-discover every pipeline file in a directory tree, scan all, return per-file summary + aggregated severity counts + `fails_threshold` boolean
+  - `ciguard.explain_rule(rule_id)` — return canonical metadata for a rule (name, description, severity, category, remediation, compliance mappings, platforms, sample evidence)
+  - `ciguard.diff_baseline(file_path, baseline_path, platform, offline)` — run a scan and compute the v0.5 baseline delta. Returns `new` / `resolved` / `unchanged_count` / `score_delta`
+  - `ciguard.list_rules(platform=None, severity=None)` — enumerate the catalog with optional filters
+- **Enterprise gate `CIGUARD_MCP_DISABLED`** — sysadmins managing corporate fleets can prevent local ciguard MCP servers via MDM (Jamf, Intune), `/etc/environment`, Group Policy, or shell profile. When set to `1` / `true` / `yes` / `on` (case-insensitive), `ciguard mcp` exits 2 with a clear policy message before starting the server. Designed for orgs standardising on a centralised MCP gateway that proxies, audits, and authorises tool traffic.
+- **`ciguard mcp` subcommand** to launch the stdio server. No flags currently — stdio is the only transport. Future SSE/HTTP transports would extend this command.
+- **Auto-discovery (`src/ciguard/discovery.py`)** — proto-Slice-9. Walks a directory tree and returns every recognised pipeline file: `.gitlab-ci.yml`, `.github/workflows/*.yml`, `Jenkinsfile` / `*.jenkinsfile`, and `*.groovy` files containing pipeline markers (`pipeline {` or `node('...') {` — stricter than `looks_like_jenkinsfile` to avoid false-positives in Gradle/Spring/Grails projects). Excludes `.git`, `node_modules`, virtualenvs, build/cache dirs by default. Used by `ciguard.scan_repo` MCP tool; will also back the `ciguard scan-repo` CLI subcommand in v0.9.0.
+- **Rule catalog (`src/ciguard/rule_catalog.py`)** — harvested at startup by scanning the labelled bad fixtures and capturing the first emission per `rule_id`. 34 of 44 rules are covered (the missing ~10 — PIPE-004, RUN-001, DEP-002, GHA-IAM-002/003/005, JKN-IAM-002, JKN-PIPE-002, all 6 SCA-*) don't fire on the bad fixtures and aren't yet enumerated. `explain_rule` returns a clear hint for unknown IDs. The catalog is the canonical source for `list_rules`, `explain_rule`, and any future docs / VS Code extension / web UI.
+
+### Internals
+- New optional dependency: `mcp>=1.0` (only pulled in by the `[mcp]` extra — the base install stays lean for CI use).
+- 46 new tests (389 → **435**): 25 for MCP tool dispatch, 11 for the `CIGUARD_MCP_DISABLED` gate, 10 for discovery.
+
+### Why this design
+- Stdio transport because every desktop MCP client expects the `command` + `args` config pattern.
+- 5 tools chosen to support the highest-value workflows: *"explain this finding"* (`scan + explain_rule`), *"draft a PR description"* (`scan + diff_baseline`), *"audit this whole repo"* (`scan_repo`).
+- Rule catalog harvested rather than hand-extracted — avoided refactoring four analyzer modules to introduce a separate rule registry. The analyzer remains the source of truth for what a Finding's metadata looks like.
+- Env-var gate over config file because the entire policy surface for v0.8.0 is "on" or "off" — env vars give operational flexibility (per-machine, per-process, MDM-friendly) without the loader / precedence-rules / schema-validation cost of a full config file. If real enterprise feedback later demands granular per-tool controls, a config file earns its complexity.
+
 ## [0.7.0] — 2026-04-26
 
 Polish slice — answers two adoption-blocking gaps. **Renamed from "v0.5.1" during planning** because v0.6.0 + v0.6.1 had shipped in the meantime; per semver, `.ciguardignore` is a new on-disk format with new CLI semantics, so this is a minor bump rather than a backwards 0.5.x patch on top of 0.6.1.

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ciguard"
-version = "0.7.0"
-description = "Static security auditor for CI/CD pipelines with .ciguardignore rationale-required suppression, baseline / delta reports, EOL-aware image checks, and GitHub Actions CVE lookups — GitLab CI, GitHub Actions, and Jenkins Pipelines (Declarative + node-style Scripted). Pre-commit hook included."
+version = "0.8.0"
+description = "Static security auditor for CI/CD pipelines — now with a Model Context Protocol server (`pip install 'ciguard[mcp]'`) exposing scan / scan_repo / explain_rule / diff_baseline / list_rules to Claude Desktop / Claude Code / Cursor. Plus .ciguardignore rationale-required suppression, baseline / delta reports, EOL-aware image checks, GitHub Actions CVE lookups across GitLab CI, GitHub Actions, and Jenkins Pipelines. Pre-commit hook + CIGUARD_MCP_DISABLED enterprise gate."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
@@ -44,6 +44,13 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "ruff>=0.4",
+]
+mcp = [
+    # Model Context Protocol SDK — exposes ciguard scans as MCP tools that
+    # any MCP-compatible client (Claude Desktop, Claude Code, Cursor,
+    # VS Code MCP extensions) can invoke. Optional extra so the base
+    # `pip install ciguard` install stays lean for CI use.
+    "mcp>=1.0",
 ]
 
 [project.urls]
