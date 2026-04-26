@@ -31,7 +31,7 @@ from ciguard.policy.models import (
 
 FIXTURES = Path(__file__).parent / "fixtures"
 parser  = GitLabCIParser()
-engine  = AnalysisEngine()
+engine  = AnalysisEngine(enable_sca=False)
 evaluator = PolicyEvaluator()
 
 

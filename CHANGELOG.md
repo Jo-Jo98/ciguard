@@ -3,6 +3,34 @@
 All notable changes to `ciguard` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] — 2026-04-26
+
+First release after the original PRD closed. Adds **SCA enrichment** — CVE/EOL awareness for the container images and language runtimes referenced inside the pipeline. ciguard remains a *pipeline-configuration* scanner; this release adds *dependency awareness* to existing findings without overlapping with full SCA tools (Snyk / Dependabot / Nexus IQ). The headline use-case is end-of-life detection: pipelines silently accumulate `python:3.9`, `node:16`, `alpine:3.16`, `debian:11` references that go EOL and stay in production for years afterwards.
+
+### Added
+- **`SCA-EOL-001` — End-of-Life Container Base Image** (Critical past 90d EOL, High past EOL ≤90d). Fires on Alpine, Debian, Ubuntu, CentOS, Rocky, AlmaLinux, Fedora image bases whose cycle has reached upstream end-of-life.
+- **`SCA-EOL-002` — End-of-Life Language Runtime** (same severity scheme as 001). Fires on Python, Node, Ruby, Go, Java (OpenJDK / Eclipse Temurin / Amazon Corretto), Rust, PHP image tags whose runtime cycle is past EOL.
+- **`SCA-EOL-003` — Container Image Approaching End-of-Life** (Info, ≤90 days remaining). Advance warning so EOL upgrades can be planned, not reactive. Deliberately Info-level to avoid alert fatigue.
+- **`SCA-PIN-001` — Image Pinned by Tag, Not by Digest** (Low). Catches the gap between PIPE-001 (which fires on `:latest` / no tag) and true content immutability. Tags are mutable in most registries; digest pinning (`@sha256:...`) is the only way to be sure the same image runs on every CI invocation. Deliberately Low — most teams accept this trade-off knowingly, but high-trust pipelines should pin to digest.
+- **`endoflife.date` integration** as the EOL data source. Free, vendor-neutral, ~250 products covered. ciguard caches the per-product JSON at `~/.ciguard/cache/endoflife-<product>.json` with a 24h TTL — pipeline scans stay fast, and the cache survives across runs and across pipelines on the same machine.
+- **`--offline` CLI flag** on `ciguard scan` — disables all SCA network lookups, uses cache only. Required for air-gapped CI environments. Cache misses + offline = silent skip (not a finding); we never fabricate EOL data.
+- **`AnalysisEngine(enable_sca=False)`** opt-out for callers that want strict platform-rule-only behaviour (and for tests).
+- **Cross-platform image extraction** — SCA rules run for GitLab CI (job `image:`), GitHub Actions (`jobs.<id>.container` + `services`), and Jenkins (Declarative agents at top-level + per-stage + parallel children). One SCA module, three platforms.
+
+### Why we stop here (and what's NOT in scope)
+- **NOT general SCA** on the user's project dependencies (`requirements.txt`, `package.json`, `pom.xml`, etc.). That's the Snyk / Dependabot / Nexus IQ space — they have years of vulnerability database curation and we'd lose head-on. ciguard scans what's *referenced in the pipeline*, not what runs at application runtime.
+- **NOT writing our own vulnerability database.** OSV.dev (planned for v0.6.1 CVE work) and endoflife.date are exhaustive and free.
+- **NOT licence compliance.** Different user persona; separate adjacent product.
+
+### Validation
+- **318 / 318 tests passing** (was 288 in v0.5.0; +30 new tests in `test_sca_rules.py` covering image-reference parsing, EndOfLifeClient cache + offline behaviour, EOL severity dispatch, digest-pinning nudge logic, and engine opt-out).
+- All existing fixtures pass with `enable_sca=False` — no regression to the 17-project GitLab corpus, the 14-project Jenkins corpus, or the labelled fixture validator (still 100% recall, 0 FP across 10 fixtures).
+- Real-world smoke (against a deliberately-bad fixture with `python:3.9-slim`, `alpine:3.16`, `node:18-alpine`): all three correctly flagged Critical with accurate EOL date evidence (`python:3.9` EOL 2025-10-31, `alpine:3.16` EOL 2024-05-23, `node:18` EOL 2025-04-30).
+- Lint clean.
+
+### Roadmap context
+This release implements PRD Slice 14 (SCA enrichment, originally planned as v0.7.0; brought forward in response to user prioritisation 2026-04-26). CVE lookup against OSV.dev + GitHub Advisory DB is **deferred to v0.6.1** — same infrastructure (HTTP client, cache, offline flag), different data source, deserves its own focused session.
+
 ## [0.5.0] — 2026-04-25
 
 This release closes the original PRD with the last outstanding feature: **baseline / delta reports** for incremental scanning. Teams can now seed a baseline of acknowledged findings, and subsequent scans report only what *changed* — new findings appearing, prior findings resolved — rather than re-flagging the same set of known issues every CI run.

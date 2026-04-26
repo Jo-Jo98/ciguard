@@ -40,7 +40,7 @@ GHA_FIXTURES = FIXTURES / "github_actions"
 class TestSARIFFromGitLabCI:
     def setup_method(self):
         p = GitLabCIParser().parse_file(FIXTURES / "bad_pipeline.yml")
-        self.report = AnalysisEngine().analyse(p, "bad_pipeline.yml")
+        self.report = AnalysisEngine(enable_sca=False).analyse(p, "bad_pipeline.yml")
         self.sarif = json.loads(SARIFReporter().render(self.report))
 
     def test_top_level_shape(self):
@@ -108,7 +108,7 @@ class TestSARIFFromGitLabCI:
 class TestSARIFFromGitHubActions:
     def setup_method(self):
         wf = GitHubActionsParser().parse_file(GHA_FIXTURES / "bad_actions.yml")
-        self.report = AnalysisEngine().analyse(wf, "bad_actions.yml")
+        self.report = AnalysisEngine(enable_sca=False).analyse(wf, "bad_actions.yml")
         self.sarif = json.loads(SARIFReporter().render(self.report))
 
     def test_platform_recorded_in_tool_properties(self):
@@ -145,7 +145,7 @@ class TestSARIFEdgeCases:
         # Good_pipeline.yml produces zero findings — the SARIF output should
         # still be valid (empty results array, empty rules array).
         p = GitLabCIParser().parse_file(FIXTURES / "good_pipeline.yml")
-        report = AnalysisEngine().analyse(p, "good_pipeline.yml")
+        report = AnalysisEngine(enable_sca=False).analyse(p, "good_pipeline.yml")
         sarif = json.loads(SARIFReporter().render(report))
         run = sarif["runs"][0]
         assert run["results"] == []
@@ -189,7 +189,7 @@ class TestSARIFEdgeCases:
 class TestSARIFBaselineState:
     def test_partial_fingerprints_present_on_every_result(self):
         p = GitLabCIParser().parse_file(FIXTURES / "bad_pipeline.yml")
-        report = AnalysisEngine().analyse(p, "bad_pipeline.yml")
+        report = AnalysisEngine(enable_sca=False).analyse(p, "bad_pipeline.yml")
         sarif = json.loads(SARIFReporter().render(report))
         for r in sarif["runs"][0]["results"]:
             assert "partialFingerprints" in r
@@ -198,7 +198,7 @@ class TestSARIFBaselineState:
 
     def test_baseline_state_omitted_when_no_delta(self):
         p = GitLabCIParser().parse_file(FIXTURES / "bad_pipeline.yml")
-        report = AnalysisEngine().analyse(p, "bad_pipeline.yml")
+        report = AnalysisEngine(enable_sca=False).analyse(p, "bad_pipeline.yml")
         sarif = json.loads(SARIFReporter().render(report))
         for r in sarif["runs"][0]["results"]:
             assert "baselineState" not in r
@@ -207,7 +207,7 @@ class TestSARIFBaselineState:
         from ciguard.analyzer.baseline import compute_delta, load_baseline
 
         p = GitLabCIParser().parse_file(FIXTURES / "bad_pipeline.yml")
-        report = AnalysisEngine().analyse(p, "bad_pipeline.yml")
+        report = AnalysisEngine(enable_sca=False).analyse(p, "bad_pipeline.yml")
 
         # Empty baseline → every current finding is `new`.
         baseline_file = tmp_path / "baseline.json"
@@ -228,13 +228,13 @@ class TestSARIFBaselineState:
 
         # Baseline = bad pipeline (lots of findings).
         bad_pipe = GitLabCIParser().parse_file(FIXTURES / "bad_pipeline.yml")
-        bad_report = AnalysisEngine().analyse(bad_pipe, "bad_pipeline.yml")
+        bad_report = AnalysisEngine(enable_sca=False).analyse(bad_pipe, "bad_pipeline.yml")
         baseline_file = tmp_path / "baseline.json"
         write_baseline(bad_report, baseline_file)
 
         # Current scan = good pipeline (zero findings) → everything resolved.
         good_pipe = GitLabCIParser().parse_file(FIXTURES / "good_pipeline.yml")
-        good_report = AnalysisEngine().analyse(good_pipe, "good_pipeline.yml")
+        good_report = AnalysisEngine(enable_sca=False).analyse(good_pipe, "good_pipeline.yml")
         good_report.delta = compute_delta(good_report, load_baseline(baseline_file), baseline_file)
 
         sarif = json.loads(SARIFReporter().render(good_report))

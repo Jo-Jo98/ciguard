@@ -145,7 +145,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     # ---- Analyse
     print(f"{_DIM}[{step}/{total_steps}]{_RESET} Running security rules ...", end=" ", flush=True)
     step += 1
-    engine = AnalysisEngine()
+    engine = AnalysisEngine(sca_offline=getattr(args, "offline", False))
     report = engine.analyse(target_for_summary, pipeline_name=input_path.name)
     total = report.summary["total"]
     crits = report.summary["by_severity"].get("Critical", 0)
@@ -494,6 +494,14 @@ def main() -> int:
         "--llm-model", default=None,
         help="Override the LLM model (e.g. claude-haiku-4-5-20251001, gpt-4o-mini).",
     )
+    # ---- SCA flags (v0.6)
+    scan_parser.add_argument(
+        "--offline", action="store_true", default=False,
+        help="Disable network lookups for SCA enrichment (endoflife.date EOL "
+             "data). Uses on-disk cache only. Required for air-gapped CI "
+             "environments. Cache lives at `~/.ciguard/cache/` by default.",
+    )
+
     # ---- Baseline / delta flags (v0.5)
     scan_parser.add_argument(
         "--baseline", default=None,

@@ -19,7 +19,7 @@ from ciguard.parser.gitlab_parser import GitLabCIParser
 FIXTURES = Path(__file__).parent / "fixtures"
 
 parser = GitLabCIParser()
-engine = AnalysisEngine()
+engine = AnalysisEngine(enable_sca=False)
 
 
 # ---------------------------------------------------------------------------

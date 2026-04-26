@@ -10,6 +10,9 @@ from typing import Dict, List
 
 from typing import Union
 
+from pathlib import Path
+from typing import Optional
+
 from .. import __version__
 from ..models.jenkinsfile import Jenkinsfile
 from ..models.pipeline import (
@@ -25,6 +28,8 @@ from ..models.workflow import Workflow
 from .gha_rules import GHA_RULES
 from .jenkins_rules import JENKINS_RULES
 from .rules import RULES, _reset_counters
+from .sca.endoflife import EndOfLifeClient
+from .sca_rules import SCA_RULES
 
 # ---------------------------------------------------------------------------
 # Scoring weights
@@ -61,16 +66,61 @@ class AnalysisEngine:
     (GitHub Actions), or Jenkinsfile (Jenkins Declarative Pipeline) and
     returns a unified `Report`."""
 
+    def __init__(
+        self,
+        enable_sca: bool = True,
+        sca_offline: bool = False,
+        sca_cache_dir: Optional[Path] = None,
+    ) -> None:
+        # SCA enrichment (v0.6.0). Cache lives at `~/.ciguard/cache/`
+        # by default — shared across pipeline scans on the same machine
+        # so a single fetch of (e.g.) python EOL data benefits every
+        # subsequent run for 24 hours.
+        # `enable_sca=False` skips SCA entirely — useful for tests that
+        # assert only platform-rule behaviour, and for any caller that
+        # wants strict offline-no-cache behaviour.
+        self.enable_sca = enable_sca
+        cache_dir = sca_cache_dir or (Path.home() / ".ciguard" / "cache")
+        self._eol_client = EndOfLifeClient(
+            cache_dir=cache_dir,
+            offline=sca_offline,
+        )
+
     def analyse(
         self,
         target: Union[Pipeline, Workflow, Jenkinsfile],
         pipeline_name: str = "pipeline",
     ) -> Report:
         if isinstance(target, Workflow):
-            return self._analyse_workflow(target, pipeline_name)
-        if isinstance(target, Jenkinsfile):
-            return self._analyse_jenkinsfile(target, pipeline_name)
-        return self._analyse_pipeline(target, pipeline_name)
+            report = self._analyse_workflow(target, pipeline_name)
+        elif isinstance(target, Jenkinsfile):
+            report = self._analyse_jenkinsfile(target, pipeline_name)
+        else:
+            report = self._analyse_pipeline(target, pipeline_name)
+        # SCA rules run for every platform after the platform-specific
+        # rule pass. They may add findings + need to be reflected in the
+        # risk score and summary, so we recompute both.
+        if self.enable_sca:
+            sca_findings = self._run_sca(target)
+            if sca_findings:
+                report.findings.extend(sca_findings)
+                report.risk_score = self._calculate_risk(report.findings)
+                report.summary = self._build_summary(report.findings)
+        return report
+
+    def _run_sca(self, target: Union[Pipeline, Workflow, Jenkinsfile]) -> List[Finding]:
+        """Run every SCA rule against the target. Each rule receives the
+        shared EndOfLifeClient so cache state + offline mode are
+        consistent across the run."""
+        findings: List[Finding] = []
+        for rule in SCA_RULES:
+            try:
+                findings.extend(rule(target, self._eol_client))
+            except Exception as exc:
+                import traceback
+                print(f"[WARN] SCA rule {rule.__name__} raised: {exc}\n"
+                      f"{traceback.format_exc()}")
+        return findings
 
     # ------------------------------------------------------------------
     # GitLab CI path (existing)

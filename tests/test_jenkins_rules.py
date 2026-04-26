@@ -176,7 +176,7 @@ class TestSc002:
 
 class TestEngineIntegration:
     def test_engine_dispatches_to_jenkins_path(self):
-        report = AnalysisEngine().analyse(_bad(), pipeline_name="bad_jenkinsfile.Jenkinsfile")
+        report = AnalysisEngine(enable_sca=False).analyse(_bad(), pipeline_name="bad_jenkinsfile.Jenkinsfile")
         assert report.platform == "jenkins"
         # Synthesised pipeline shadow shows our two stages as jobs.
         assert {j.name for j in report.pipeline.jobs} == {"Build", "Deploy"}
@@ -191,7 +191,7 @@ class TestEngineIntegration:
         }
 
     def test_good_fixture_is_clean(self):
-        report = AnalysisEngine().analyse(_good(), pipeline_name="good_jenkinsfile.Jenkinsfile")
+        report = AnalysisEngine(enable_sca=False).analyse(_good(), pipeline_name="good_jenkinsfile.Jenkinsfile")
         assert report.platform == "jenkins"
         assert report.summary["total"] == 0
         assert report.risk_score.grade == "A"
@@ -230,7 +230,7 @@ class TestNodeScriptedIntegration:
     def test_bad_node_scripted_fires_expected_rules(self):
         _reset_counters()
         jf = parser.parse_file(FIXTURES / "bad_node_scripted.Jenkinsfile")
-        report = AnalysisEngine().analyse(jf, pipeline_name="bad_node_scripted.Jenkinsfile")
+        report = AnalysisEngine(enable_sca=False).analyse(jf, pipeline_name="bad_node_scripted.Jenkinsfile")
         assert report.platform == "jenkins"
         rule_ids = {f.rule_id for f in report.findings}
         # JKN-RUN-001 fires because `node` (no label) → agent.kind == "any".
@@ -243,14 +243,14 @@ class TestNodeScriptedIntegration:
     def test_good_node_scripted_clean(self):
         _reset_counters()
         jf = parser.parse_file(FIXTURES / "good_node_scripted.Jenkinsfile")
-        report = AnalysisEngine().analyse(jf, pipeline_name="good_node_scripted.Jenkinsfile")
+        report = AnalysisEngine(enable_sca=False).analyse(jf, pipeline_name="good_node_scripted.Jenkinsfile")
         assert report.summary["total"] == 0
         assert report.risk_score.grade == "A"
 
     def test_shared_library_only_fires_lib_001(self):
         _reset_counters()
         jf = parser.parse_file(FIXTURES / "shared_library_call.Jenkinsfile")
-        report = AnalysisEngine().analyse(jf, pipeline_name="shared_library_call.Jenkinsfile")
+        report = AnalysisEngine(enable_sca=False).analyse(jf, pipeline_name="shared_library_call.Jenkinsfile")
         rule_ids = {f.rule_id for f in report.findings}
         assert rule_ids == {"JKN-LIB-001"}
 
@@ -261,6 +261,6 @@ class TestNodeScriptedIntegration:
         # doesn't fabricate findings.
         _reset_counters()
         jf = parser.parse_file(FIXTURES / "freeform_scripted.Jenkinsfile")
-        report = AnalysisEngine().analyse(jf, pipeline_name="freeform_scripted.Jenkinsfile")
+        report = AnalysisEngine(enable_sca=False).analyse(jf, pipeline_name="freeform_scripted.Jenkinsfile")
         assert report.summary["total"] == 0
         assert jf.is_scripted is True

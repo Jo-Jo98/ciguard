@@ -111,7 +111,7 @@ class TestFingerprint:
 class TestBaselineRoundTrip:
     def setup_method(self):
         parser = GitLabCIParser()
-        engine = AnalysisEngine()
+        engine = AnalysisEngine(enable_sca=False)
         pipeline = parser.parse_file(FIXTURES / "bad_pipeline.yml")
         self.report = engine.analyse(pipeline, pipeline_name="bad_pipeline.yml")
 
@@ -158,7 +158,7 @@ class TestBaselineRoundTrip:
 class TestDelta:
     def setup_method(self):
         parser = GitLabCIParser()
-        engine = AnalysisEngine()
+        engine = AnalysisEngine(enable_sca=False)
         pipeline = parser.parse_file(FIXTURES / "bad_pipeline.yml")
         self.report = engine.analyse(pipeline, pipeline_name="bad_pipeline.yml")
 
@@ -200,7 +200,7 @@ class TestDelta:
         baseline_data = load_baseline(out)
 
         clean_pipeline = GitLabCIParser().parse_file(FIXTURES / "good_pipeline.yml")
-        clean_report = AnalysisEngine().analyse(clean_pipeline, pipeline_name="good_pipeline.yml")
+        clean_report = AnalysisEngine(enable_sca=False).analyse(clean_pipeline, pipeline_name="good_pipeline.yml")
         delta = compute_delta(clean_report, baseline_data, out)
         assert len(delta.new) == 0
         assert len(delta.resolved) == len(self.report.findings)
@@ -237,5 +237,5 @@ class TestDelta:
 class TestEngineScannerVersion:
     def test_gitlab_report_has_scanner_version(self):
         pipeline = GitLabCIParser().parse_file(FIXTURES / "good_pipeline.yml")
-        report = AnalysisEngine().analyse(pipeline, pipeline_name="good")
+        report = AnalysisEngine(enable_sca=False).analyse(pipeline, pipeline_name="good")
         assert report.scanner_version  # any non-empty string

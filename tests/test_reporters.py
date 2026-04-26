@@ -24,7 +24,7 @@ from ciguard.reporter.json_report import JSONReporter
 
 FIXTURES = Path(__file__).parent / "fixtures"
 parser    = GitLabCIParser()
-engine    = AnalysisEngine()
+engine    = AnalysisEngine(enable_sca=False)
 evaluator = PolicyEvaluator()
 
 

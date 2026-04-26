@@ -22,7 +22,7 @@ from ciguard.parser.github_actions import GitHubActionsParser
 
 FIXTURES = Path(__file__).parent / "fixtures" / "github_actions"
 parser = GitHubActionsParser()
-engine = AnalysisEngine()
+engine = AnalysisEngine(enable_sca=False)
 
 
 # ---------------------------------------------------------------------------
