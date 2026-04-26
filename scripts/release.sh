@@ -60,8 +60,20 @@ fi
 
 # Pull rebase first — Dependabot PRs land continuously and stale-base pushes
 # get rejected. Captured as feedback memory `feedback_ciguard_pull_first`.
-echo "→ git pull --rebase origin main"
+# Stash the expected version + changelog edits around the pull because
+# `git pull --rebase` refuses to run with unstaged changes (even ones the
+# script's own sanity check explicitly expects).
+echo "→ git pull --rebase origin main (stashing pyproject.toml + CHANGELOG.md)"
+STASHED=0
+if ! git diff --quiet pyproject.toml CHANGELOG.md; then
+    git stash push --quiet -m "release.sh pre-pull: version+changelog" \
+        -- pyproject.toml CHANGELOG.md
+    STASHED=1
+fi
 git pull --rebase origin main
+if [[ $STASHED -eq 1 ]]; then
+    git stash pop --quiet
+fi
 
 VENV="${VENV:-./venv}"
 if [[ ! -x "$VENV/bin/python" ]]; then
