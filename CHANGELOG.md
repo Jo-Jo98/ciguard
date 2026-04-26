@@ -3,6 +3,31 @@
 All notable changes to `ciguard` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.0] — 2026-04-26
+
+Polish slice — answers two adoption-blocking gaps. **Renamed from "v0.5.1" during planning** because v0.6.0 + v0.6.1 had shipped in the meantime; per semver, `.ciguardignore` is a new on-disk format with new CLI semantics, so this is a minor bump rather than a backwards 0.5.x patch on top of 0.6.1.
+
+### Added
+- **`.ciguardignore` — file-based finding suppression with mandatory rationale.** YAML list at the repo root (or alongside the pipeline file). Modelled on Bandit's `# nosec` pattern but adapted for the YAML / external-file shape since pipeline files have no universal inline-comment convention. **Every entry must include a written `reason`** of at least 10 characters — naked rule-id-only disables are rejected at load time. This stops the "developer just disables the rule that fired" antipattern. Optional fields: `location` (substring filter on the finding location) and `expires` (ISO date — emits a warning when past, but still suppresses). New module `src/ciguard/ignore.py`. Discovery walks up from the input file until it finds a `.ciguardignore` or hits a `.git` directory; override with `--ignore-file <path>`, disable entirely with `--no-ignore-file`.
+- **Suppressed findings remain visible in every report.** New `Suppressed` section in HTML, PDF, and SARIF outputs with the count and source path. JSON auto-serialises the new `Report.suppressed` / `Report.ignore_warnings` / `Report.ignore_file_path` fields. SARIF emits suppressed findings as results with the native `suppressions[]` array (kind=`external`), which GitHub Code Scanning renders as auto-closed "Suppressed" alerts rather than active ones. Suppressed findings do **not** contribute to the risk score or trigger CI failure exit codes.
+- **PDF reporter delta section** (deferred from v0.5.0). Mirrors the HTML "Delta vs Baseline" section: 4-tile summary (new / resolved / unchanged / score Δ) followed by tables of new + resolved findings. Renders only when `--baseline` is supplied.
+- **Pre-commit hook entry** at `.pre-commit-hooks.yaml`. Users can wire ciguard into `pre-commit` chains in three lines:
+  ```yaml
+  repos:
+    - repo: https://github.com/Jo-Jo98/ciguard
+      rev: v0.7.0
+      hooks:
+        - id: ciguard
+  ```
+  The hook auto-matches `.gitlab-ci.yml`, `.github/workflows/*.yml`, `Jenkinsfile`, and `*.groovy`. Blocks commits on Critical / High findings via existing exit codes.
+- **`ciguard scan` accepts positional file paths** in addition to `--input`. Multiple paths scan in sequence; exit code is the worst across the batch (Critical > High > clean). Required for the pre-commit hook integration; backward-compatible for existing `--input` callers.
+
+### Internals
+- New `Report` fields: `suppressed: List[Finding]`, `ignore_warnings: List[str]`, `ignore_file_path: Optional[str]`.
+- Suppression runs *before* baseline diff so suppressed findings don't appear as `new` against an old baseline that pre-dated the suppression.
+- Risk score and summary are recomputed after suppression so the post-suppression posture is reflected in terminal output, exit code, baseline comparison, and reporters.
+- 30 new tests for ignore loader / validator / discovery / apply, plus 1 SARIF suppression rendering test. Total: **389 passing** (was 358 in v0.6.1).
+
 ## [0.6.1] — 2026-04-26
 
 Second post-PRD release, completes the SCA story started in v0.6.0. Adds **GitHub Actions CVE awareness**, **graduated EOL runway tiers**, and **end-of-active-support detection**. All three changes share the v0.6.0 caching + offline infrastructure — no new external dependencies beyond OSV.dev.

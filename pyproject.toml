@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ciguard"
-version = "0.6.1"
-description = "Static security auditor for CI/CD pipelines with baseline / delta reports, EOL-aware image checks, and GitHub Actions CVE lookups — GitLab CI, GitHub Actions, and Jenkins Pipelines (Declarative + node-style Scripted)."
+version = "0.7.0"
+description = "Static security auditor for CI/CD pipelines with .ciguardignore rationale-required suppression, baseline / delta reports, EOL-aware image checks, and GitHub Actions CVE lookups — GitLab CI, GitHub Actions, and Jenkins Pipelines (Declarative + node-style Scripted). Pre-commit hook included."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
