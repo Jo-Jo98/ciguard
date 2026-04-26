@@ -3,7 +3,17 @@
 All notable changes to `ciguard` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.8.0] — 2026-04-26
+## [0.8.1] — 2026-04-26
+
+**CI hotfix for v0.8.0.** v0.8.0 was tagged but never published — the test job in `_checks.yml` ran without the `[mcp]` extra installed, so two MCP-SDK-dependent tests (`test_all_five_tools_registered`, `test_build_server_returns_server_instance`) failed across all four Python versions. The release workflow's `needs: checks` gate correctly blocked PyPI + GHCR publish jobs (the v0.7.0 hardening is doing its job). v0.8.1 is the first successful release of the MCP slice.
+
+### Fixed
+- `_checks.yml` test job now installs `pip install -e ".[dev,mcp]"` so the MCP SDK (`mcp>=1.0`) is available when running the test suite.
+- `tests/test_mcp_server.py` SDK-dependent tests are now decorated with `@pytest.mark.skipif(not _MCP_AVAILABLE, ...)`. Defensive: tests still pass cleanly when a user runs the suite without the `[mcp]` extra installed; only the dispatch tests run, the SDK ones skip with a clear reason.
+
+Everything else is exactly the v0.8.0 scope (below).
+
+## [0.8.0] — 2026-04-26 — TAGGED BUT NEVER PUBLISHED (see v0.8.1 above)
 
 **Strategic differentiator release.** ciguard now ships a Model Context Protocol server, exposing its scanning capabilities as tools any AI client (Claude Desktop, Claude Code, Cursor, VS Code MCP extensions) can invoke. First-mover positioning while the AI-native devsecops space is empty.
 
