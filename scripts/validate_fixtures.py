@@ -157,7 +157,14 @@ LABELS: dict[str, dict] = {
 
 
 def scan(fixture: str, kind: str = "gitlab"):
-    engine = AnalysisEngine()
+    # Disable SCA enrichment for the labelled-fixture validator. The
+    # fixtures enforce PRD acceptance criteria 1 & 2 (≥90% TP / 0 FP on
+    # bad_pipeline.yml + good_pipeline.yml), which were defined before
+    # SCA existed. SCA findings (EOL/CVE on referenced images and actions)
+    # are a separate signal validated by tests/test_sca_rules.py — they
+    # would correctly flag good_pipeline.yml's pinned `python:3.9` etc.,
+    # but those aren't "false positives" against the original criteria.
+    engine = AnalysisEngine(enable_sca=False)
     if kind == "jenkins":
         target = JenkinsfileParser().parse_file(
             FIXTURES / "jenkins" / f"{fixture}.Jenkinsfile"
