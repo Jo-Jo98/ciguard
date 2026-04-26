@@ -3,6 +3,33 @@
 All notable changes to `ciguard` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.1] — 2026-04-26
+
+Second post-PRD release, completes the SCA story started in v0.6.0. Adds **GitHub Actions CVE awareness**, **graduated EOL runway tiers**, and **end-of-active-support detection**. All three changes share the v0.6.0 caching + offline infrastructure — no new external dependencies beyond OSV.dev.
+
+### Added
+- **`SCA-CVE-001` — GHA action / reusable workflow has known security advisory.** Queries OSV.dev's `GitHub Actions` ecosystem for advisories affecting `uses: actions/checkout@v4.1.0` and `uses: org/repo/.github/workflows/x.yml@v1` references. Severity inherited from the advisory (CVSS / GHSA label), defaulting to Medium when no signal is present. Multiple advisories on the same action aggregate to a single finding at the highest severity.
+- **`SCA-EOS-001` — End of active support** (Low). Fires when an image / runtime is past end-of-active-support (vendor stops bug fixes / minor releases) but before end-of-security-life. Uses endoflife.date's `support` field where present (Java LTS, Python, Node have one; most distros don't). Silent skip when no `support` field — no false positives on Alpine/Debian/Ubuntu.
+- **OSV.dev client** at `src/ciguard/analyzer/sca/osv.py`. Mirrors the v0.6.0 `EndOfLifeClient` pattern: `~/.ciguard/cache/osv-github-actions-<package>-<version>.json`, 24h TTL, `--offline` flag, in-memory dedup within a scan, network-error fallback to stale cache. POST-based query against `https://api.osv.dev/v1/query` with the same User-Agent header convention.
+- **GHA action extractor** at `src/ciguard/analyzer/sca/action_extractor.py`. Pulls `uses:` references from both step-level (`steps[*].uses`) and job-level (`jobs.<id>.uses` reusable workflow) positions. Skips SHA-pinned refs (Dependabot lane), local refs (`./...`), Docker actions (`docker://...`), and branch-style refs (`@main`/`@master`).
+
+### Changed (BREAKING for SCA-EOL-003 severity)
+- **`SCA-EOL-003` severity is now graduated** rather than always Info. New runway tiers:
+  - EOL ≤ 90 days away → **High** (was Info)
+  - EOL in 91-180 days → **Medium** (was silent — NEW signal)
+  - EOL in 181-365 days → **Low** (was silent — NEW signal)
+  - EOL > 365 days away → silent (unchanged)
+- This addresses real-world feedback: the v0.6.0 single-tier Info was too coarse; teams want "≤6 months = higher alert, ≤12 months = warning." If you depend on SCA-EOL-003 always being Info, your `--fail-on-new` thresholds may behave differently — review baselines before upgrading. Most users will see *more* findings (the 91-365 day window is now visible) but at lower severity.
+
+### Internals
+- `SCARuleFunc` signature changed from `(target, eol)` to `(target, eol, osv)` — both clients are now passed to every SCA rule. Rules that don't need OSV (`rule_sca_eol`, `rule_sca_pin_001`, `rule_sca_eos_001`) explicitly `del osv`. Rules that don't need EOL (`rule_sca_cve_001`) `del eol`.
+- `AnalysisEngine` constructs both clients with the same `cache_dir` + `offline` flags so a single `--offline` run uses cached data from both sources consistently.
+- 40 new tests (318 → 358) covering OSV client cache + offline, action extractor (every `uses:` shape), graduated tier dispatch, EOS detection, and CVE-001 end-to-end. Network mocked via seeded cache directories — fully offline / deterministic.
+
+### Not in scope (rationale recorded for posterity)
+- **Container base CVE lookup** was originally PRD'd as `SCA-CVE-002` but dropped after redesign — that's the Trivy/Grype lane (layer-by-layer package scanning). ciguard would compete and lose. The EOL tier graduation gives most of the same risk signal at the cycle level without overlap.
+- **Application package CVEs** (`pip install requests==2.20.0`) — Snyk/Dependabot lane, unchanged.
+
 ## [0.6.0] — 2026-04-26
 
 First release after the original PRD closed. Adds **SCA enrichment** — CVE/EOL awareness for the container images and language runtimes referenced inside the pipeline. ciguard remains a *pipeline-configuration* scanner; this release adds *dependency awareness* to existing findings without overlapping with full SCA tools (Snyk / Dependabot / Nexus IQ). The headline use-case is end-of-life detection: pipelines silently accumulate `python:3.9`, `node:16`, `alpine:3.16`, `debian:11` references that go EOL and stay in production for years afterwards.

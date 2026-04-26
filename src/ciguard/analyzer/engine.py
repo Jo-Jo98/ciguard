@@ -29,6 +29,7 @@ from .gha_rules import GHA_RULES
 from .jenkins_rules import JENKINS_RULES
 from .rules import RULES, _reset_counters
 from .sca.endoflife import EndOfLifeClient
+from .sca.osv import OSVClient
 from .sca_rules import SCA_RULES
 
 # ---------------------------------------------------------------------------
@@ -85,6 +86,12 @@ class AnalysisEngine:
             cache_dir=cache_dir,
             offline=sca_offline,
         )
+        # OSV.dev client (v0.6.1) — shares the same cache dir + offline
+        # flag as the EOL client. Used by SCA-CVE-001.
+        self._osv_client = OSVClient(
+            cache_dir=cache_dir,
+            offline=sca_offline,
+        )
 
     def analyse(
         self,
@@ -110,12 +117,12 @@ class AnalysisEngine:
 
     def _run_sca(self, target: Union[Pipeline, Workflow, Jenkinsfile]) -> List[Finding]:
         """Run every SCA rule against the target. Each rule receives the
-        shared EndOfLifeClient so cache state + offline mode are
-        consistent across the run."""
+        shared EndOfLifeClient + OSVClient so cache state + offline mode
+        are consistent across the run."""
         findings: List[Finding] = []
         for rule in SCA_RULES:
             try:
-                findings.extend(rule(target, self._eol_client))
+                findings.extend(rule(target, self._eol_client, self._osv_client))
             except Exception as exc:
                 import traceback
                 print(f"[WARN] SCA rule {rule.__name__} raised: {exc}\n"
