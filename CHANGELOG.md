@@ -3,6 +3,26 @@
 All notable changes to `ciguard` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.2] — 2026-04-27
+
+**Security hotfix.** Closes the four findings from ciguard's first self-conducted penetration test cycle (Cycle 1, 2026-04-26 → 2026-05-12). Methodology: PTES + OWASP TG v4.2 + CREST report framing. No Critical or High findings; all four below are Low/Medium. Public advisories will be filed as private GitHub Security Advisories at the time of fix-ship and disclosed 14 days after.
+
+### Fixed
+
+- **CYCLE-1-001 (Medium, CVSS 5.7, CWE-59) — `discover_pipeline_files` followed symlinks out of scan root.** An attacker who can plant a symlink in a directory the user (or AI agent via the `mcp.scan_repo` tool) scans could cause discovery to walk into the symlink target. Realistic threat: MCP confused-deputy via adversarial repo clone fed to AI agent. Fix at `src/ciguard/discovery.py`: new `follow_symlinks: bool = False` parameter (the new default refuses to descend into symlinked directories OR symlinked files); belt-and-braces filter that drops any result whose `.resolve()` lies outside the scan root, applied even when callers opt in to `follow_symlinks=True`. Three new tests in `tests/test_discovery.py::TestSymlinkSafety`.
+
+- **CYCLE-1-002 (Low, CVSS 3.4, CWE-269) — Container image ran as root.** The published `ghcr.io/jo-jo98/ciguard` image inherited the default root user (no explicit `USER` directive). Defence-in-depth gap if any future container-runtime escape CVE landed. Fix in `Dockerfile`: create a `ciguard` system user, `chown` writable mount points, switch to `USER ciguard` before `CMD`. Port 8080 still works (>1024). Trivy DS-0002 misconfig clears.
+
+- **CYCLE-1-003 (Low, CVSS 3.1, CWE-770) — SCA HTTP client read response bodies unbounded.** Both `src/ciguard/analyzer/sca/osv.py` and `src/ciguard/analyzer/sca/endoflife.py` called `resp.read()` with no size cap. A hostile or successfully MITM'd OSV.dev / endoflife.date could return a multi-GB body and OOM-kill ciguard. Fix: new `MAX_RESPONSE_BYTES = 5 * 1024 * 1024` constant in both modules; `resp.read(MAX_RESPONSE_BYTES + 1)` with overflow check returns `None` (caller falls back to stale cache). Three new tests in `tests/test_sca_rules.py::TestSCAResponseSizeCap`.
+
+- **CYCLE-1-004 (Low, CVSS 4.3, CWE-693) — Web UI missing HTTP defence-in-depth headers.** OWASP ZAP baseline scan flagged 11 alerts: missing CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, COOP, CORP. Defence-in-depth gap; would matter the moment anyone hosts ciguard publicly. Fix: new `SecurityHeadersMiddleware` at `src/ciguard/web/security_headers.py`, registered in `app.py`. Per-path CSP carve-out for `/api/docs` and `/api/redoc` (Swagger UI / ReDoc load assets from cdn.jsdelivr.net). Six new tests in `tests/test_web.py::TestSecurityHeaders`.
+
+### Internals
+
+- 12 new tests added (435 → **444 passing**) covering all four fixes.
+- All four [Phase 4 PoC scripts](https://github.com/Jo-Jo98/ciguard) (committed as part of the cycle's vault docs) re-run after this release should flip from `EXPLOIT CONFIRMED` to `EXPLOIT FAILED`.
+- Methodology + findings docs live at `Project ciguard/Pentest Reports/2026-05-12-cycle-1.md` (vault) — full CREST-style report.
+
 ## [0.8.1] — 2026-04-26
 
 **CI hotfix for v0.8.0.** v0.8.0 was tagged but never published — the test job in `_checks.yml` ran without the `[mcp]` extra installed, so two MCP-SDK-dependent tests (`test_all_five_tools_registered`, `test_build_server_returns_server_instance`) failed across all four Python versions. The release workflow's `needs: checks` gate correctly blocked PyPI + GHCR publish jobs (the v0.7.0 hardening is doing its job). v0.8.1 is the first successful release of the MCP slice.
