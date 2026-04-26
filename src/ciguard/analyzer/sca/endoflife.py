@@ -209,7 +209,8 @@ class EndOfLifeClient:
             headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout_seconds) as resp:
+            # B310: URL is hardcoded HTTPS to endoflife.date; no scheme injection possible.
+            with urllib.request.urlopen(req, timeout=self.timeout_seconds) as resp:  # nosec B310
                 if resp.status != 200:
                     return None
                 payload = json.loads(resp.read().decode("utf-8"))
