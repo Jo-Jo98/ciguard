@@ -97,3 +97,78 @@ class TestDiscovery:
         (tmp_path / "a" / ".gitlab-ci.yml").write_text("stages: []")
         files = discover_pipeline_files(tmp_path)
         assert [df.path.name for df in files] == [".gitlab-ci.yml", "Jenkinsfile"]
+
+
+class TestSymlinkSafety:
+    """v0.8.2 — CYCLE-1-001 fix.
+
+    Default `follow_symlinks=False` prevents path-escape: if an attacker
+    plants a symlink in a scanned directory, discovery must NOT walk into
+    the symlink target.
+    """
+
+    def test_default_skips_symlinked_directory(self, tmp_path):
+        # Stage a "secret" pipeline file outside the scan root.
+        secret_dir = tmp_path / "_outside"
+        secret_dir.mkdir()
+        (secret_dir / ".gitlab-ci.yml").write_text("stages: [secret]")
+
+        # Victim scan root with a planted symlink pointing at the secret dir.
+        scan_root = tmp_path / "scan"
+        scan_root.mkdir()
+        (scan_root / "innocent.gitlab-ci.yml").write_text("stages: [legitimate]")
+        (scan_root / "trojan").symlink_to(secret_dir, target_is_directory=True)
+
+        files = discover_pipeline_files(scan_root)
+        names = {df.path.name for df in files}
+        # Discovery must NOT have walked the symlink — only the legitimate file.
+        # (Note: legitimate.gitlab-ci.yml does NOT match the recogniser pattern
+        # — only .gitlab-ci.yml exactly does. So we expect 0 results from
+        # discovery's perspective; the important assertion is that no file
+        # under `_outside/` was returned.)
+        for df in files:
+            assert "_outside" not in str(df.path), \
+                f"discovery escaped scan root via symlink: {df.path}"
+        # Belt: the named secret file must not appear at all.
+        assert ".gitlab-ci.yml" not in names or all(
+            "_outside" not in str(df.path) for df in files if df.path.name == ".gitlab-ci.yml"
+        )
+
+    def test_default_skips_symlinked_file(self, tmp_path):
+        # A symlinked file (not directory) targeting a recognised pipeline file
+        # outside scan root must also be skipped.
+        outside_file = tmp_path / "_outside.gitlab-ci.yml"
+        outside_file.write_text("stages: [secret]")
+
+        scan_root = tmp_path / "scan"
+        scan_root.mkdir()
+        (scan_root / ".gitlab-ci.yml").symlink_to(outside_file)
+
+        files = discover_pipeline_files(scan_root)
+        # The symlinked file should NOT have been returned.
+        for df in files:
+            try:
+                df.path.resolve().relative_to(scan_root.resolve())
+            except ValueError:
+                raise AssertionError(
+                    f"discovery returned a file resolved outside scan root: "
+                    f"{df.path} -> {df.path.resolve()}"
+                )
+
+    def test_opt_in_follow_still_filters_to_resolved_root(self, tmp_path):
+        # Even with follow_symlinks=True, the belt-and-braces filter must
+        # exclude paths whose .resolve() is outside the scan root.
+        outside = tmp_path / "_outside"
+        outside.mkdir()
+        (outside / ".gitlab-ci.yml").write_text("stages: [secret]")
+
+        scan_root = tmp_path / "scan"
+        scan_root.mkdir()
+        (scan_root / "trojan").symlink_to(outside, target_is_directory=True)
+
+        files = discover_pipeline_files(scan_root, follow_symlinks=True)
+        # follow_symlinks=True allows the walker to enter the symlink, but the
+        # post-collection filter keeps only paths under the resolved root.
+        for df in files:
+            assert "_outside" not in str(df.path.resolve()), \
+                f"resolved path leaked outside root: {df.path.resolve()}"

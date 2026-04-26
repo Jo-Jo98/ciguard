@@ -141,3 +141,53 @@ class TestUI:
         r = client.get("/report/test-scan-id")
         assert r.status_code == 200
         assert "test-scan-id" in r.text  # scan_id injected via Jinja2
+
+
+# ---------------------------------------------------------------------------
+# Security headers (v0.8.2 — CYCLE-1-004 fix)
+# ---------------------------------------------------------------------------
+
+
+class TestSecurityHeaders:
+    """Every response must carry the OWASP Secure Headers set. Per-path
+    CSP carve-out for /api/docs (Swagger UI loads from jsdelivr)."""
+
+    REQUIRED = (
+        "X-Content-Type-Options",
+        "X-Frame-Options",
+        "Referrer-Policy",
+        "Permissions-Policy",
+        "Cross-Origin-Opener-Policy",
+        "Cross-Origin-Resource-Policy",
+        "Content-Security-Policy",
+    )
+
+    def test_root_has_all_required_headers(self):
+        r = client.get("/")
+        for h in self.REQUIRED:
+            assert h in r.headers, f"missing {h}: got {dict(r.headers)}"
+
+    def test_xfo_is_deny(self):
+        r = client.get("/")
+        assert r.headers["X-Frame-Options"] == "DENY"
+
+    def test_xcto_is_nosniff(self):
+        r = client.get("/")
+        assert r.headers["X-Content-Type-Options"] == "nosniff"
+
+    def test_csp_is_strict_for_root(self):
+        r = client.get("/")
+        csp = r.headers["Content-Security-Policy"]
+        assert "default-src 'self'" in csp
+        # Root must NOT allow jsdelivr (only /api/docs does)
+        assert "jsdelivr" not in csp
+
+    def test_csp_carves_out_jsdelivr_for_api_docs(self):
+        r = client.get("/api/docs")
+        csp = r.headers.get("Content-Security-Policy", "")
+        assert "cdn.jsdelivr.net" in csp, f"docs CSP should allow jsdelivr: {csp}"
+
+    def test_health_endpoint_also_protected(self):
+        r = client.get("/api/health")
+        for h in self.REQUIRED:
+            assert h in r.headers

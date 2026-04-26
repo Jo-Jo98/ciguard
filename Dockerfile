@@ -14,8 +14,14 @@ COPY src/ ./src/
 COPY policies/ ./policies/
 RUN pip install --no-cache-dir .
 
-# Output volumes
+# Output volumes (writable by the non-root user we'll switch to below)
 RUN mkdir -p /reports /policies-mount
+
+# Run as a non-root user (defence-in-depth against container-runtime CVEs).
+# Port 8080 is fine for non-root since it's >1024.
+RUN groupadd -r ciguard && useradd -r -g ciguard -d /home/ciguard -m -s /usr/sbin/nologin ciguard \
+    && chown -R ciguard:ciguard /reports /policies-mount /app
+USER ciguard
 
 EXPOSE 8080
 

@@ -718,3 +718,95 @@ class TestEngineSCAv061Wiring:
         ).analyse(pipe, "x")
         eos = [f for f in report.findings if f.rule_id == "SCA-EOS-001"]
         assert len(eos) == 1
+
+
+class TestSCAResponseSizeCap:
+    """v0.8.2 — CYCLE-1-003 fix.
+
+    Both SCA HTTP clients cap `resp.read()` at MAX_RESPONSE_BYTES so a
+    hostile / MITM'd server can't OOM-kill ciguard with a multi-GB body.
+    """
+
+    def test_osv_caps_oversize_response(self, tmp_path, monkeypatch):
+        from ciguard.analyzer.sca import osv
+
+        # Make the cap small so the test is fast.
+        monkeypatch.setattr(osv, "MAX_RESPONSE_BYTES", 1024)
+
+        class _FakeResp:
+            def __init__(self, body):
+                self._body = body
+                self.status = 200
+            def read(self, n=None):
+                return self._body[:n] if n is not None else self._body
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+
+        # 2 KB body — exceeds the 1 KB cap, must be rejected (return None).
+        oversize = b'{"vulns":[{"id":"X"}]}' + b"A" * 2048
+
+        def fake_urlopen(req, timeout=None):
+            return _FakeResp(oversize)
+
+        monkeypatch.setattr(osv.urllib.request, "urlopen", fake_urlopen)
+
+        client = osv.OSVClient(cache_dir=tmp_path, offline=False)
+        result = client._fetch(osv.ECOSYSTEM_GITHUB_ACTIONS, "actions/checkout", "1.0.0")
+        assert result is None, "OSV must refuse to parse oversize responses"
+
+    def test_endoflife_caps_oversize_response(self, tmp_path, monkeypatch):
+        from ciguard.analyzer.sca import endoflife
+
+        monkeypatch.setattr(endoflife, "MAX_RESPONSE_BYTES", 1024)
+
+        class _FakeResp:
+            def __init__(self, body):
+                self._body = body
+                self.status = 200
+            def read(self, n=None):
+                return self._body[:n] if n is not None else self._body
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+
+        oversize = b"[" + b"A" * 2048 + b"]"
+
+        def fake_urlopen(req, timeout=None):
+            return _FakeResp(oversize)
+
+        monkeypatch.setattr(endoflife.urllib.request, "urlopen", fake_urlopen)
+
+        client = endoflife.EndOfLifeClient(cache_dir=tmp_path, offline=False)
+        result = client._fetch("alpine-linux")
+        assert result is None, "endoflife must refuse to parse oversize responses"
+
+    def test_osv_accepts_response_within_cap(self, tmp_path, monkeypatch):
+        from ciguard.analyzer.sca import osv
+
+        # 1 MB cap; tiny payload well within.
+        monkeypatch.setattr(osv, "MAX_RESPONSE_BYTES", 1024 * 1024)
+
+        class _FakeResp:
+            def __init__(self, body):
+                self._body = body
+                self.status = 200
+            def read(self, n=None):
+                return self._body[:n] if n is not None else self._body
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+
+        small = b'{"vulns":[{"id":"GHSA-xx","summary":"x","database_specific":{"severity":"HIGH"}}]}'
+
+        def fake_urlopen(req, timeout=None):
+            return _FakeResp(small)
+
+        monkeypatch.setattr(osv.urllib.request, "urlopen", fake_urlopen)
+
+        client = osv.OSVClient(cache_dir=tmp_path, offline=False)
+        result = client._fetch(osv.ECOSYSTEM_GITHUB_ACTIONS, "actions/checkout", "1.0.0")
+        assert result is not None and len(result) == 1

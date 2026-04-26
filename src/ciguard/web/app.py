@@ -32,6 +32,7 @@ from ciguard.parser.gitlab_parser import GitLabCIParser
 from ciguard.parser.jenkinsfile import JenkinsfileParser, looks_like_jenkinsfile
 from ciguard.reporter.html_report import HTMLReporter
 from ciguard.web.scan_store import get_store
+from ciguard.web.security_headers import SecurityHeadersMiddleware
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -47,6 +48,7 @@ app = FastAPI(
     docs_url="/api/docs",
     redoc_url="/api/redoc",
 )
+app.add_middleware(SecurityHeadersMiddleware)
 
 _parser = GitLabCIParser()
 _engine = AnalysisEngine()

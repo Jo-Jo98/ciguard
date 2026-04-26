@@ -45,6 +45,12 @@ USER_AGENT = "ciguard-sca/0.6 (+https://github.com/Jo-Jo98/ciguard)"
 DEFAULT_TTL_SECONDS = 24 * 60 * 60
 DEFAULT_TIMEOUT_SECONDS = 8
 
+# Cap on the response body we'll accept. OSV.dev advisory responses are
+# typically <100 KB; 5 MB is generous headroom. Prevents memory exhaustion
+# from a hostile / compromised endpoint or successful TLS MITM returning a
+# multi-GB response.
+MAX_RESPONSE_BYTES = 5 * 1024 * 1024
+
 # OSV.dev ecosystem string for GitHub Actions advisories. Case-sensitive.
 ECOSYSTEM_GITHUB_ACTIONS = "GitHub Actions"
 
@@ -180,7 +186,12 @@ class OSVClient:
             with urllib.request.urlopen(req, timeout=self.timeout_seconds) as resp:  # nosec B310
                 if resp.status != 200:
                     return None
-                payload = json.loads(resp.read().decode("utf-8"))
+                # Read with size cap (+1) so we can detect overflow. A hostile
+                # server returning gigabytes would otherwise OOM-kill ciguard.
+                body = resp.read(MAX_RESPONSE_BYTES + 1)
+                if len(body) > MAX_RESPONSE_BYTES:
+                    return None
+                payload = json.loads(body.decode("utf-8"))
                 if not isinstance(payload, dict):
                     return None
                 vulns = payload.get("vulns")

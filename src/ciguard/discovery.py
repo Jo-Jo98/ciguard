@@ -70,18 +70,35 @@ def discover_pipeline_files(
     root: Path,
     *,
     exclude_dirs: Optional[Iterable[str]] = None,
+    follow_symlinks: bool = False,
 ) -> List[DiscoveredFile]:
-    """Walk `root` and return every recognised pipeline file. Symlinks
-    are followed once but cycles are guarded by tracking visited resolved
-    paths."""
+    """Walk `root` and return every recognised pipeline file.
+
+    `follow_symlinks` defaults to False: symlinked directories AND symlinked
+    files are skipped. This prevents path-escape attacks where an attacker
+    plants a symlink in a directory the user (or AI agent) scans, causing
+    discovery to read pipeline-shaped files from outside `root`. Callers
+    with a legitimate reason to follow can opt in explicitly.
+
+    Defence-in-depth: even with `follow_symlinks=True`, results are
+    filtered to those whose `.resolve()` lies under `root.resolve()`.
+    """
     excludes = set(exclude_dirs) if exclude_dirs is not None else set(_DEFAULT_EXCLUDES)
     if not root.exists():
+        return []
+
+    try:
+        root_resolved = root.resolve()
+    except OSError:
         return []
 
     found: List[DiscoveredFile] = []
     visited_dirs: Set[Path] = set()
 
     def walk(d: Path) -> None:
+        # Skip symlinked directories unless explicitly opted in.
+        if not follow_symlinks and d.is_symlink():
+            return
         try:
             resolved = d.resolve()
         except OSError:
@@ -103,12 +120,29 @@ def discover_pipeline_files(
                 continue
             if not entry.is_file():
                 continue
+            # Skip symlinked files too (a symlink can target a regular file
+            # outside root that iterdir() reports as a file).
+            if not follow_symlinks and entry.is_symlink():
+                continue
 
             platform = _classify(entry)
             if platform is not None:
                 found.append(DiscoveredFile(path=entry, platform=platform))
 
     walk(root)
+
+    # Belt-and-braces: filter results to those that actually live under the
+    # resolved root. Catches any symlink-following surface the walker missed
+    # (e.g. opt-in `follow_symlinks=True` callers).
+    def _under_root(p: Path) -> bool:
+        try:
+            p.resolve().relative_to(root_resolved)
+            return True
+        except (OSError, ValueError):
+            return False
+
+    found = [df for df in found if _under_root(df.path)]
+
     # Stable sort for deterministic output: by path string.
     found.sort(key=lambda df: str(df.path))
     return found
