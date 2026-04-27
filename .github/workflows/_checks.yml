@@ -81,3 +81,90 @@ jobs:
       # venv breaks the first-run-on-a-new-version (pip-audit fails when
       # ciguard itself is not yet on PyPI for the current dev tag).
       - run: pip-audit --strict -r requirements.txt
+
+  regression-cycle1:
+    name: Cycle 1 PoC regression
+    runs-on: ubuntu-latest
+    # Runs the four PoC scripts from the Cycle 1 self-pentest engagement
+    # (closed 2026-04-27, fixes shipped in v0.8.2). Each script's exit code
+    # encodes the outcome: exit 0 = EXPLOIT_CONFIRMED (regression), exit 1 =
+    # EXPLOIT_FAILED (fix in place). The CI invocation inverts so the step
+    # fails the build only when a regression appears. See
+    # tests/regression/cycle1/README.md for the full mapping.
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install ciguard with web + mcp extras
+        # web brings uvicorn + starlette for CYCLE-1-004; mcp keeps parity
+        # with test job; ciguard itself for CYCLE-1-001 + 003.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[mcp]"
+
+      - name: CYCLE-1-001 — discover_pipeline_files symlink escape
+        run: |
+          set +e
+          ./tests/regression/cycle1/CYCLE-1-001-symlink-escape.sh
+          rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::CYCLE-1-001 regression — discover_pipeline_files followed symlink (GHSA-8cxw-cc62-q28v)"
+            exit 1
+          elif [ "$rc" -eq 1 ]; then
+            echo "OK — exploit failed (fix in place)"
+          else
+            echo "::error::CYCLE-1-001 PoC errored (exit $rc) — investigate harness"
+            exit 1
+          fi
+
+      - name: Build container image for CYCLE-1-002
+        run: docker build -t ciguard:dev .
+
+      - name: CYCLE-1-002 — Container image runs as root
+        env:
+          IMAGE: ciguard:dev
+        run: |
+          set +e
+          ./tests/regression/cycle1/CYCLE-1-002-container-root.sh
+          rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::CYCLE-1-002 regression — container running as root (GHSA-jrm4-4pcf-4763)"
+            exit 1
+          elif [ "$rc" -eq 1 ]; then
+            echo "OK — exploit failed (fix in place)"
+          else
+            echo "::error::CYCLE-1-002 PoC errored (exit $rc) — investigate harness"
+            exit 1
+          fi
+
+      - name: CYCLE-1-003 — SCA HTTP unbounded read
+        run: |
+          set +e
+          python tests/regression/cycle1/CYCLE-1-003-sca-unbounded-read.py
+          rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::CYCLE-1-003 regression — SCA client read oversize response (GHSA-xw8c-rrvx-f7xq)"
+            exit 1
+          elif [ "$rc" -eq 1 ]; then
+            echo "OK — exploit failed (fix in place)"
+          else
+            echo "::error::CYCLE-1-003 PoC errored (exit $rc) — investigate harness"
+            exit 1
+          fi
+
+      - name: CYCLE-1-004 — Web UI missing security headers
+        run: |
+          set +e
+          ./tests/regression/cycle1/CYCLE-1-004-missing-security-headers.sh
+          rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::CYCLE-1-004 regression — defence-in-depth headers missing (GHSA-7ww3-xvf5-cxwm)"
+            exit 1
+          elif [ "$rc" -eq 1 ]; then
+            echo "OK — exploit failed (fix in place)"
+          else
+            echo "::error::CYCLE-1-004 PoC errored (exit $rc) — investigate harness"
+            exit 1
+          fi

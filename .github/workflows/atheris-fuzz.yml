@@ -1,0 +1,122 @@
+name: Atheris fuzz (weekly)
+
+# Coverage-guided fuzzing of the three parsers. Cycle 1 (2026-04-26) ran 220k
+# iterations in ~2 minutes and surfaced no crashes; weekly 1M-iteration runs
+# are cheap and catch regressions across new rule additions or parser
+# refactors. Cron-driven (NOT push-triggered) — fuzzing is a probe, not a
+# deterministic gate.
+#
+# Failure mode: if atheris finds a crash, the workflow uploads the crashing
+# input as an artifact and opens an issue tagged `security` + `fuzz-finding`.
+#
+# Per Cycle 1 final report, Recommendation #3.
+
+on:
+  schedule:
+    # Sunday 06:00 UTC. Weekend off-peak; results land before the working week.
+    - cron: '0 6 * * 0'
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: 'Number of fuzz iterations'
+        required: false
+        default: '1000000'
+
+permissions:
+  contents: read
+  issues: write   # for opening fuzz-finding issues
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install ciguard + atheris
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[fuzz]"
+
+      - name: Determine iteration budget
+        id: budget
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "n=${{ github.event.inputs.iterations }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "n=1000000" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run atheris fuzz harness
+        id: fuzz
+        run: |
+          mkdir -p fuzz-corpus crashes
+          # -atheris_runs caps total executions; -timeout caps per-input wall
+          # time so a hang doesn't burn the 30-min job budget.
+          # NOTE: atheris exits non-zero if it finds a crash. We catch the
+          # exit code so we can run the issue-creation step regardless.
+          set +e
+          python tests/fuzz/fuzz_parsers.py \
+            -atheris_runs=${{ steps.budget.outputs.n }} \
+            -timeout=10 \
+            -artifact_prefix=crashes/ \
+            fuzz-corpus
+          rc=$?
+          echo "exit=$rc" >> "$GITHUB_OUTPUT"
+          # Atheris exit codes: 0 = clean, 77 = crash found.
+          if [ "$rc" -eq 0 ]; then
+            echo "Atheris fuzz clean — no crashes after ${{ steps.budget.outputs.n }} iterations."
+          else
+            echo "Atheris fuzz found a crash (exit $rc). Crashing input(s) under crashes/."
+          fi
+          # Don't fail the step yet — let later steps run.
+          exit 0
+
+      - name: Upload corpus + crashes as artifact
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        with:
+          name: atheris-${{ github.run_id }}
+          path: |
+            fuzz-corpus/
+            crashes/
+          retention-days: 30
+
+      - name: Open issue on crash
+        if: steps.fuzz.outputs.exit != '0'
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        with:
+          script: |
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              `Atheris weekly fuzz run found a crash.`,
+              ``,
+              `**Workflow run:** ${run}`,
+              `**Iterations attempted:** ${{ steps.budget.outputs.n }}`,
+              `**Atheris exit code:** ${{ steps.fuzz.outputs.exit }}`,
+              ``,
+              `Crashing input(s) attached to the workflow run as artifact \`atheris-${context.runId}\` (30-day retention).`,
+              ``,
+              `Triage:`,
+              `1. Download the artifact, identify the crashing input under \`crashes/\`.`,
+              `2. Reproduce locally: \`python tests/fuzz/fuzz_parsers.py crashes/<filename>\``,
+              `3. If reproducible, classify (parser bug, memory issue, infinite loop) and patch.`,
+              `4. Add the crashing input to a regression test in \`tests/test_*.py\` so it cannot silently return.`,
+            ].join('\n');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Atheris fuzz crash — ${new Date().toISOString().slice(0,10)}`,
+              body,
+              labels: ['security', 'fuzz-finding'],
+            });
+
+      - name: Fail the job if a crash was found
+        if: steps.fuzz.outputs.exit != '0'
+        run: |
+          echo "Crash found — see issue + artifact."
+          exit 1

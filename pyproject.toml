@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ciguard"
-version = "0.8.2"
+version = "0.8.3"
 description = "Static security auditor for CI/CD pipelines — now with a Model Context Protocol server (`pip install 'ciguard[mcp]'`) exposing scan / scan_repo / explain_rule / diff_baseline / list_rules to Claude Desktop / Claude Code / Cursor. Plus .ciguardignore rationale-required suppression, baseline / delta reports, EOL-aware image checks, GitHub Actions CVE lookups across GitLab CI, GitHub Actions, and Jenkins Pipelines. Pre-commit hook + CIGUARD_MCP_DISABLED enterprise gate."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -51,6 +51,12 @@ mcp = [
     # VS Code MCP extensions) can invoke. Optional extra so the base
     # `pip install ciguard` install stays lean for CI use.
     "mcp>=1.0",
+]
+fuzz = [
+    # Coverage-guided Python fuzzer. Used by tests/fuzz/fuzz_parsers.py and
+    # the weekly cron at .github/workflows/atheris-fuzz.yml. Optional extra
+    # so base install stays lean (atheris pulls in clang headers).
+    "atheris>=2.3",
 ]
 
 [project.urls]

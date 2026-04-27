@@ -3,6 +3,23 @@
 All notable changes to `ciguard` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.3] — 2026-04-27
+
+**Cycle 1 follow-up — CI regression coverage + weekly fuzz cron.** No code changes to `src/ciguard/`; this release wires the four Cycle 1 PoC scripts in as permanent CI regression gates and adds the weekly atheris fuzz schedule, both recommended in the Cycle 1 final report.
+
+### Added
+
+- **`tests/regression/cycle1/`** — the four Cycle 1 PoC scripts copied in as live regression tests (CYCLE-1-001 symlink escape, -002 container as root, -003 SCA unbounded read, -004 missing security headers). Each script's exit code encodes outcome: `0 = EXPLOIT_CONFIRMED` (regression), `1 = EXPLOIT_FAILED` (fix in place). The vault retains the originals as historical Cycle 1 engagement artefacts.
+- **`regression-cycle1` job in `_checks.yml`** — runs all four PoCs on every push/PR via CI, and on every release tag via Release. Inverts each script's exit code so the build fails only when a regression appears. The container PoC builds the image locally first so the gate fires before publish, not after.
+- **`.github/workflows/atheris-fuzz.yml`** — weekly cron (Sunday 06:00 UTC) running 1M-iteration coverage-guided fuzz across the three parsers (`GitLabCIParser`, `GitHubActionsParser`, `JenkinsfileParser`). Per-input timeout 10 s, total budget 30 min. Crash → uploads the crashing input as a 30-day artifact + opens an issue tagged `security` + `fuzz-finding`. Manual `workflow_dispatch` accepts a custom iteration count.
+- **`tests/fuzz/fuzz_parsers.py`** — atheris harness dispatching a single `FuzzedDataProvider` stream into one of the three parsers.
+- **`fuzz` extra in `pyproject.toml`** — `pip install -e ".[fuzz]"` adds atheris (kept optional so the base install stays lean).
+
+### Internals
+
+- Test count unchanged at 447 (regression PoCs are wired as workflow steps, not pytest tests — each is a self-contained shell script with explicit exit-code semantics, deliberately mirroring how the original engagement reproduced them).
+- Cycle 1 final report Recommendations #2 + #3 are now closed.
+
 ## [0.8.2] — 2026-04-27
 
 **Security hotfix.** Closes the four findings from ciguard's first self-conducted penetration test cycle (Cycle 1, 2026-04-26 → 2026-05-12). Methodology: PTES + OWASP TG v4.2 + CREST report framing. No Critical or High findings; all four below are Low/Medium. Public advisories will be filed as private GitHub Security Advisories at the time of fix-ship and disclosed 14 days after.
