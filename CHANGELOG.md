@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Test count unchanged at 447 (regression PoCs are wired as workflow steps, not pytest tests — each is a self-contained shell script with explicit exit-code semantics, deliberately mirroring how the original engagement reproduced them).
 - Cycle 1 final report Recommendations #2 + #3 are now closed.
+- **Node 24 action upgrades ahead of June 2026 deprecation.** Bumped `actions/checkout` v4 → v6.0.2 and `actions/setup-python` v5 → v6.2.0 in the bandit + pip-audit jobs (they had lagged behind the test/lint jobs which were already on v6). Bumped `actions/upload-artifact` v4.6.0 → v7.0.1 and `actions/github-script` v7.0.1 → v9.0.0 in the new atheris-fuzz workflow. Bumped `docker/setup-qemu-action` v3 → v4.0.0 in release.yml. All other action pins were already on Node 24-capable versions. SHA pins updated; semver comments preserved.
 
 ## [0.8.2] — 2026-04-27
 
