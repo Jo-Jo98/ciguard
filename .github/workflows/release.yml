@@ -59,12 +59,16 @@ jobs:
           path: sbom/*.cdx.json
           retention-days: 90
       - name: Publish to PyPI (trusted publishing + PEP 740 attestations)
-        # v1.14.0 enables PEP 740 attestations by default when id-token: write
-        # is granted — every uploaded distribution gets a signed Sigstore
-        # bundle visible at https://pypi.org/project/ciguard/#files. Verifies
-        # the wheel was built by *this* workflow, not republished by a
-        # compromised maintainer account.
-        uses: pypa/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d  # v1.14.0
+        # PEP 740 attestations have been default-on in this action since v1.10
+        # whenever `id-token: write` is granted — every uploaded distribution
+        # gets a signed Sigstore bundle visible at https://pypi.org/project/ciguard/#files.
+        # Pin tracks `release/v1` branch HEAD: pypa only builds the
+        # `ghcr.io/pypa/gh-action-pypi-publish:<sha>` Docker image for that
+        # branch, so SHA-pinning to a version tag like v1.14.0 fails with
+        # `manifest unknown` on `docker pull` — the v0.9.3 second-retry
+        # failure mode. Resync with `gh api repos/pypa/gh-action-pypi-publish/
+        # git/refs/heads/release/v1` after a major.
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1 HEAD as of 2026-04-28
 
   ghcr:
     name: Build & push container image to GHCR
