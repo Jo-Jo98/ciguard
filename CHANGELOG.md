@@ -3,6 +3,40 @@
 All notable changes to `ciguard` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.1] — 2026-04-28
+
+**Deployment hardening — five small fixes from the external LLM-assisted code review.** The static analyser core was already in good shape; the surfaces around it that activate when people *deploy* ciguard (web UI, MCP server, LLM enrichment, container base, scanner egress) are the gap this slice closes. All five tracked in the v0.8.4 milestone (issues #9–#13); shipped as v0.9.1 since v0.9.0 already shipped earlier today.
+
+### Added
+
+- **`CIGUARD_WEB_TOKEN` bearer-token auth on the web API (issue #9).** New `src/ciguard/web/auth.py`. Default behaviour unchanged — auth is opt-in via the env var, so the local-dev path stays frictionless. When set, every `/api/scan`, `/api/report/*`, and `/report/*` request requires `Authorization: Bearer <token>`; constant-time compare prevents timing-recovery. `/api/health` is deliberately ungated (k8s probes / load balancers). `python -m ciguard.web.app` prints a yellow startup warning when binding to a non-loopback host without a token.
+- **`CIGUARD_MCP_ROOT` workspace allowlist on MCP scan tools (issue #10).** Defence-in-depth on Cycle 1's CYCLE-1-001 ([GHSA-8cxw-cc62-q28v](https://github.com/Jo-Jo98/ciguard/security/advisories/GHSA-8cxw-cc62-q28v)) — the symlink fix prevented escape *within* the scan root; this prevents the scan root itself being attacker-influenced via an adversarial MCP-client prompt ("scan /etc/...", "scan ~/.aws/..."). When set, `_tool_scan` / `_tool_scan_repo` / `_tool_diff_baseline` refuse paths outside the allowlist (after `expanduser` + `resolve` to collapse `..` traversal). Default: no restriction (preserves v0.8.x behaviour).
+- **`--no-scanners` CLI flag + `CIGUARD_NO_SCANNERS` env var (issue #13).** Master kill-switch for external-binary scanner integrations (Semgrep, OpenSSF Scorecard, GitLab native). `run_all_scanners()` short-circuits to an empty list when set. Pair with `--offline` for fully hardened, network-free runs:
+  ```bash
+  ciguard scan-repo . --offline --no-scanners
+  ```
+  Available on both `scan` and `scan-repo` subcommands.
+- **`--llm-consent` consent gate + `--redact-locations` privacy mode (issue #12).** `--llm` without `--llm-consent` now refuses to call the LLM and prints exactly what would be sent (rule names, locations, descriptions, compliance mappings — evidence is still always stripped). `--redact-locations` hashes finding locations + pipeline name to stable 8-char SHA-256 prefixes (`redacted:abc12345`) before send; insights stay rule-level actionable but the LLM never sees customer file paths.
+- **README "Network egress" section** enumerating every outbound call ciguard can make (OSV.dev, endoflife.date, Anthropic / OpenAI, Semgrep registry, Scorecard) with the disable-flag for each.
+
+### Changed
+
+- **Docker base `python:3.14-slim` → `python:3.13-slim` (issue #11).** Stability + reproducibility — 3.13 has mainstream wheel availability across all our deps. CI matrix never included 3.14 anyway, so the Docker image was the only place 3.14 actually ran. CYCLE-1-002 PoC re-runs against the new image confirm `USER ciguard` (uid=999) is preserved.
+
+### Internals
+
+- 21 new tests in `tests/test_deployment_hardening.py` covering all four env-var/flag surfaces plus the LLM redaction + consent gate (459 → **480 passing**).
+- `src/ciguard/scanners/runner.py` gains `_scanners_disabled()` + a docstring section explaining the env var. No behaviour change when the var is unset.
+- `src/ciguard/llm/enricher.py` adds `redact_locations` parameter to `enrich_report()` + helper `_redact()` (stable SHA-256 prefix). `_sanitise_finding()` already stripped evidence; redaction is opt-in on top of that.
+- `src/ciguard/mcp/server.py` adds `_enforce_workspace()` helper called at every path-accepting tool entrypoint. Reads `CIGUARD_MCP_ROOT` per-call (no module-level caching) so tests can monkey-patch.
+
+### Why this design
+
+- **Env vars over config files** — every operator already has a path to set env vars (k8s Secret env, systemd `Environment=`, container `--env`, MDM, shell profile). The whole policy surface for these flags is on/off (web auth) or a single path (MCP root) or boolean (no-scanners) — a config file's loader/precedence/schema machinery would be unjustified weight.
+- **Default-off for all gates.** Existing users see no behaviour change. The hardening lights up the moment the operator opts in. Matches the `CIGUARD_MCP_DISABLED` precedent set in v0.8.x.
+- **`--llm-consent` is hard-required, not a warning.** A warning users skim past is not a privacy boundary. An exit-1 with the explainer printed once changes that — the user has to type the flag to send anything.
+- **Redaction stops at locations.** Rule names / severities / compliance mappings are tool metadata; they don't reveal customer pipeline structure. Hashing them would make insights useless. The threat model is "LLM operator could see my file paths and infer my project structure," not "LLM operator could see what rules ciguard has."
+
 ## [0.9.0] — 2026-04-28
 
 **Slice 9 carve-out — `ciguard scan-repo` CLI subcommand.** Discovery foundation shipped with v0.8.x for the MCP `scan_repo` tool; this slice exposes it as a first-class CLI verb. Scans every recognised pipeline file under a directory, prints a per-file table + aggregate severity counts, and exits non-zero when `--fail-on=<severity>` is breached.
