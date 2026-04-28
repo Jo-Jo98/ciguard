@@ -3,9 +3,11 @@
 All notable changes to `ciguard` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.9.2] — 2026-04-28
+## [0.9.3] — 2026-04-28
 
 **Supply-chain attestation — closes issue #14.** From this release onwards every container image is **Sigstore-signed (keyless)** and carries **CycloneDX + SPDX SBOM attestations**; every PyPI distribution carries **PEP 740 attestations**. No long-lived signing keys; no separate key-management surface.
+
+> **Note on v0.9.2 — TAGGED BUT NEVER PUBLISHED.** v0.9.2 was the first attempt at this slice and shipped only partially: the cosign sign step succeeded (the GHCR image at the v0.9.2 SHA digest was correctly signed), but the SBOM-attestation step failed because `mkdir -p sbom` was missing from the new `attest` job. Concurrently, the PyPI publish job stalled on the `pypi` GitHub environment's `required_reviewers` rule (auto-cleared on previous releases for unclear reasons; this run actually blocked). Tag deleted from remote + local; v0.9.3 is the first successful release of this slice. Same pattern as v0.8.0 → v0.8.1.
 
 ### Added
 
