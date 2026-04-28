@@ -48,14 +48,12 @@ except ImportError:
     _MCP_AVAILABLE = False
 
 from ..analyzer.engine import AnalysisEngine
-from ..discovery import discover_pipeline_files
 from ..ignore import (
     apply_ignores,
     discover_ignore_file,
     load_ignore_file,
 )
 from ..models.jenkinsfile import Jenkinsfile
-from ..models.pipeline import Severity
 from ..models.workflow import Workflow
 from ..parser.github_actions import GitHubActionsParser, detect_format
 from ..parser.gitlab_parser import GitLabCIParser
