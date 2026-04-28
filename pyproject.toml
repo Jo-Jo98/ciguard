@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ciguard"
-version = "0.9.1"
+version = "0.9.2"
 description = "Static security auditor for CI/CD pipelines — now with a Model Context Protocol server (`pip install 'ciguard[mcp]'`) exposing scan / scan_repo / explain_rule / diff_baseline / list_rules to Claude Desktop / Claude Code / Cursor. Plus .ciguardignore rationale-required suppression, baseline / delta reports, EOL-aware image checks, GitHub Actions CVE lookups across GitLab CI, GitHub Actions, and Jenkins Pipelines. Pre-commit hook + CIGUARD_MCP_DISABLED enterprise gate."
 readme = "README.md"
 requires-python = ">=3.10"
