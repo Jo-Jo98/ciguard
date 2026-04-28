@@ -1,0 +1,71 @@
+name: Code Scanning gate
+
+# Polls the Code Scanning alerts API and fails the build if any open alert
+# exists at `severity: error` (CodeQL's blocker tier) or
+# `security_severity_level: high|critical` (the security-tagged subset).
+#
+# Why this matters: GitHub already shows alerts on the Security tab and
+# emails the repo owner on new findings, but neither blocks merging. After
+# the 2026-04-28 triage that dismissed 4 false positives, the baseline is
+# clean — any new high-priority alert means a real regression, and that
+# should fail CI before it lands on main.
+#
+# Allowed without failing: `note` (informational) and `warning/n/a` (advisory
+# without a security severity). These are code-quality nudges (unused
+# globals, empty except clauses) — they belong in a sweep PR, not a build
+# break.
+#
+# Trigger model: runs after CodeQL completes (workflow_run), AND on a daily
+# cron in case ingestion is slow / a previous gate run errored. The cron
+# catches drift the per-push gate misses.
+
+on:
+  workflow_run:
+    workflows: ["CodeQL"]
+    types: [completed]
+  schedule:
+    # 06:30 UTC, daily — sits between the 06:00 atheris/codeql cron and the
+    # rest of the day. Fires even if the per-push gate had a transient failure.
+    - cron: "30 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query Code Scanning alerts and fail on high-priority open
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          alerts=$(gh api \
+            "repos/${{ github.repository }}/code-scanning/alerts?state=open&per_page=100" \
+            --paginate)
+
+          # Fail-on threshold: rule.severity == error  OR
+          #                    rule.security_severity_level in (high, critical)
+          blockers=$(echo "$alerts" | jq '[.[] | select(
+            .rule.severity == "error"
+            or .rule.security_severity_level == "high"
+            or .rule.security_severity_level == "critical"
+          )]')
+          count=$(echo "$blockers" | jq 'length')
+
+          if [[ "$count" -gt 0 ]]; then
+            echo "::error::$count Code Scanning alert(s) at error / high / critical severity require triage:"
+            echo "$blockers" | jq -r '.[] | "  #\(.number) [\(.rule.severity)/sec=\(.rule.security_severity_level // "n/a")] \(.rule.id)\n      \(.most_recent_instance.location.path):\(.most_recent_instance.location.start_line)\n      \(.most_recent_instance.message.text)"'
+            echo ""
+            echo "::error::Triage at https://github.com/${{ github.repository }}/security/code-scanning"
+            echo "::error::Either fix the underlying issue, or dismiss with a documented reason if the alert is a false positive."
+            exit 1
+          fi
+
+          # Surface the remaining quiet alerts so the developer sees them
+          # without being blocked. Cleanup is encouraged, not required.
+          quiet=$(echo "$alerts" | jq 'length')
+          echo "::notice::Code Scanning gate green. $quiet open alert(s) at note/warning-without-security-severity (informational; sweep when convenient)."
