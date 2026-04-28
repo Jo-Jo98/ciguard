@@ -35,16 +35,22 @@ jobs:
       - name: Check distributions
         run: twine check dist/*
       - name: Generate Python-package CycloneDX SBOM (v0.9.2, issue #14)
-        # Produces a CycloneDX 1.5 SBOM from the locked dependency tree
-        # (`requirements.txt`). Written to `sbom/` (NOT `dist/`) — anything
-        # in `dist/` gets uploaded by gh-action-pypi-publish as a release
-        # distribution, which would break PyPI on first run.
-        run: mkdir -p sbom
-      - uses: CycloneDX/gh-python-generate-sbom@39fe80937489538e12de5a7b427e078649ec44bb  # v2.0.0
-        with:
-          input: ./requirements.txt
-          output: ./sbom/ciguard-${{ github.ref_name }}-python.cdx.json
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        # Direct cyclonedx-bom invocation (modern CLI). The `CycloneDX/
+        # gh-python-generate-sbom` action shipped with an older cyclonedx-py
+        # that still calls `pkg_resources` from setuptools — Python 3.12+
+        # GHA runners ship without setuptools by default, so the action
+        # blew up at v0.9.3 with `ModuleNotFoundError: No module named
+        # 'pkg_resources'`. Direct call cuts out the action and uses the
+        # `requirements` subcommand of the modern CLI. Written to `sbom/`
+        # (NOT `dist/`) — anything in `dist/` gets uploaded by
+        # gh-action-pypi-publish as a release distribution.
+        run: |
+          mkdir -p sbom
+          pip install --upgrade cyclonedx-bom
+          cyclonedx-py requirements requirements.txt \
+            --output-format JSON \
+            --outfile sbom/ciguard-${{ github.ref_name }}-python.cdx.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1 (Node 24)
         with:
           name: sbom-python-cyclonedx
           path: sbom/*.cdx.json
@@ -185,7 +191,7 @@ jobs:
             --predicate sbom/ciguard-${{ github.ref_name }}-image.spdx.json \
             "${{ steps.ref.outputs.ref }}"
 
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1 (Node 24)
         with:
           name: sbom-image
           path: sbom/*.json
