@@ -3,6 +3,30 @@
 All notable changes to `ciguard` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.0] — 2026-04-28
+
+**Slice 9 carve-out — `ciguard scan-repo` CLI subcommand.** Discovery foundation shipped with v0.8.x for the MCP `scan_repo` tool; this slice exposes it as a first-class CLI verb. Scans every recognised pipeline file under a directory, prints a per-file table + aggregate severity counts, and exits non-zero when `--fail-on=<severity>` is breached.
+
+### Added
+
+- **`ciguard scan-repo <path>` subcommand.** Auto-discovers `.gitlab-ci.yml`, `.github/workflows/*.yml`, `Jenkinsfile` / `*.jenkinsfile`, and `*.groovy` files containing pipeline markers, then scans each with the platform-appropriate parser. Terminal output is a path / platform / grade / findings table followed by an aggregate severity breakdown. Designed for monorepo CI: drop one job in your pipeline that scans the whole tree.
+  - `--fail-on Critical|High|Medium|Low|Info|none` — gate the build on aggregate severity. Default `none` makes the command informational (exit 0 unless an error occurred).
+  - `--output PATH` — write the aggregate JSON (per-file summaries + totals + by-severity counts) for downstream tooling.
+  - `--offline` — disable SCA HTTP lookups (endoflife.date / OSV.dev). Required for air-gapped runners.
+  - `--no-ignore-file` — skip `.ciguardignore` discovery and processing across every file in the walk.
+- **`src/ciguard/repo_scan.py`** — shared helper module containing `scan_repo()` and `scan_one()`. Both the CLI subcommand and the existing MCP `ciguard.scan_repo` tool delegate to it, so behaviour stays in lock-step.
+
+### Internals
+
+- 12 new tests in `tests/test_repo_scan.py` covering the helper's threshold logic + the CLI's exit codes, JSON output, missing-path handling, and empty-repo case (447 → **459 passing**).
+- `_tool_scan_repo` in `src/ciguard/mcp/server.py` collapsed from ~50 lines to a 6-line delegation; `_scan_one` and the platform detection logic moved out of the MCP module since they were never MCP-specific. No behavioural change to MCP clients.
+
+### Why this design
+
+- A single CLI verb was the smallest, highest-leverage piece of Slice 9 to ship first. The remaining Slice 9 work (GitHub App + reusable CI workflow templates) is sequenced after this lands so users have something to invoke from those templates.
+- The `repo_scan.py` extraction was opportunistic — the MCP tool already had the right shape; lifting it out costs nothing and keeps the two callers from drifting.
+- `--fail-on` defaults to `none` rather than `High`. Users adopting `scan-repo` for the first time should see findings before being broken on them; the threshold is opt-in via CI config.
+
 ## [0.8.3] — 2026-04-27
 
 **Cycle 1 follow-up — CI regression coverage + weekly fuzz cron.** No code changes to `src/ciguard/`; this release wires the four Cycle 1 PoC scripts in as permanent CI regression gates and adds the weekly atheris fuzz schedule, both recommended in the Cycle 1 final report.
