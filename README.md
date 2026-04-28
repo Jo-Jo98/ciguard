@@ -239,6 +239,48 @@ The `mcp` server reads/writes only the local filesystem (no outbound network). S
 
 The web API reads/writes only the local in-memory scan store. Set `CIGUARD_WEB_TOKEN=<random>` to require `Authorization: Bearer <token>` on `/api/scan`, `/api/report/*`, and `/report/*` — required for any non-loopback bind.
 
+## Verifying releases (Sigstore + SBOMs)
+
+From v0.9.2 onwards, every release is signed and attested via [Sigstore](https://www.sigstore.dev/) using GitHub Actions OIDC (no long-lived signing keys). The published GHCR image carries:
+
+- **A keyless Sigstore signature** binding the image digest to the workflow identity (`Jo-Jo98/ciguard/.github/workflows/release.yml@refs/tags/v<X.Y.Z>`).
+- **CycloneDX + SPDX SBOMs** as cosign attestations — high-fidelity dependency manifests produced by syft against the actual built layers.
+
+PyPI uploads carry [PEP 740 attestations](https://docs.pypi.org/attestations/) automatically (visible at https://pypi.org/project/ciguard/#files).
+
+### Verify a release
+
+Install [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) once, then:
+
+```bash
+# 1. Verify the image signature (binds the GHCR image to *this* workflow + tag)
+cosign verify ghcr.io/jo-jo98/ciguard:v0.9.2 \
+  --certificate-identity-regexp '^https://github\.com/Jo-Jo98/ciguard/\.github/workflows/release\.yml@refs/tags/v.*$' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+# 2. Pull and inspect the CycloneDX SBOM attestation
+cosign verify-attestation ghcr.io/jo-jo98/ciguard:v0.9.2 \
+  --type cyclonedx \
+  --certificate-identity-regexp '^https://github\.com/Jo-Jo98/ciguard/\.github/workflows/release\.yml@refs/tags/v.*$' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  | jq -r '.payload | @base64d | fromjson | .predicate' > ciguard-cdx.json
+
+# 3. Same for SPDX (regulators / EO 14028 lane prefer this format)
+cosign verify-attestation ghcr.io/jo-jo98/ciguard:v0.9.2 \
+  --type spdxjson \
+  --certificate-identity-regexp '^https://github\.com/Jo-Jo98/ciguard/\.github/workflows/release\.yml@refs/tags/v.*$' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  | jq -r '.payload | @base64d | fromjson | .predicate' > ciguard-spdx.json
+```
+
+The signature + attestations are also recorded in [Sigstore's public Rekor transparency log](https://search.sigstore.dev/) — anyone can audit them post-hoc, without trusting GitHub or ciguard.
+
+### What this protects against
+
+- **Maintainer-account compromise.** A stolen PyPI / GHCR token cannot republish a wheel/image with a valid signature unless the attacker also compromises the GitHub Actions OIDC chain. PEP 740 attestations on PyPI catch the same.
+- **Supply-chain insertion.** Any image not signed by *this* workflow fails verification — downstream consumers running `cosign verify` notice immediately.
+- **Audit gaps.** SBOMs answer "what's actually in this image" in two formats SAST / SCA / regulator tools speak natively.
+
 ## Running with Docker
 
 ```bash

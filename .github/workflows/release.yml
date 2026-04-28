@@ -22,7 +22,8 @@ jobs:
     needs: checks
     environment: pypi
     permissions:
-      id-token: write  # for trusted publishing (PyPI OIDC)
+      id-token: write  # for trusted publishing (PyPI OIDC) + PEP 740 attestations
+      contents: write  # for upload-artifact / SBOM attach
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
@@ -33,8 +34,28 @@ jobs:
         run: python -m build
       - name: Check distributions
         run: twine check dist/*
-      - name: Publish to PyPI (trusted publishing — no token needed once configured)
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1
+      - name: Generate Python-package CycloneDX SBOM (v0.9.2, issue #14)
+        # Produces a CycloneDX 1.5 SBOM from the locked dependency tree
+        # (`requirements.txt`). Written to `sbom/` (NOT `dist/`) — anything
+        # in `dist/` gets uploaded by gh-action-pypi-publish as a release
+        # distribution, which would break PyPI on first run.
+        run: mkdir -p sbom
+      - uses: CycloneDX/gh-python-generate-sbom@39fe80937489538e12de5a7b427e078649ec44bb  # v2.0.0
+        with:
+          input: ./requirements.txt
+          output: ./sbom/ciguard-${{ github.ref_name }}-python.cdx.json
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        with:
+          name: sbom-python-cyclonedx
+          path: sbom/*.cdx.json
+          retention-days: 90
+      - name: Publish to PyPI (trusted publishing + PEP 740 attestations)
+        # v1.14.0 enables PEP 740 attestations by default when id-token: write
+        # is granted — every uploaded distribution gets a signed Sigstore
+        # bundle visible at https://pypi.org/project/ciguard/#files. Verifies
+        # the wheel was built by *this* workflow, not republished by a
+        # compromised maintainer account.
+        uses: pypa/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d  # v1.14.0
 
   ghcr:
     name: Build & push container image to GHCR
@@ -43,6 +64,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      image: ${{ steps.tag.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - name: Log in to GHCR
@@ -63,9 +87,12 @@ jobs:
             echo "tag=manual-$(date +%Y%m%d%H%M%S)" >> $GITHUB_OUTPUT
             echo "extra=" >> $GITHUB_OUTPUT
           fi
+          # Canonical primary ref (no `:latest`) used by cosign in the attest job.
+          echo "image=ghcr.io/$REPO_LC:${{ github.ref_name }}" >> $GITHUB_OUTPUT
       - uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a  # v4.0.0 (Node 24) — enables arm64 emulation for multi-arch builds
       - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
-      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
+      - id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
         with:
           context: .
           push: true
@@ -74,6 +101,91 @@ jobs:
           # ('no matching manifest for linux/arm64'). Multi-arch added 2026-04-25.
           platforms: linux/amd64,linux/arm64
           tags: ghcr.io/${{ steps.tag.outputs.repo }}:${{ steps.tag.outputs.tag }}${{ steps.tag.outputs.extra }}
+          # `provenance: true` writes a SLSA provenance attestation alongside
+          # the image. Combined with cosign keyless signing in the attest job
+          # below, this gives downstream verifiers a full "what built this"
+          # picture: who (workflow + commit), how (Dockerfile + base image
+          # digest), when, and a Sigstore-signed signature on the manifest.
+          provenance: true
+          sbom: true
+
+  attest:
+    name: Sign image + attach SBOMs (Sigstore keyless)
+    runs-on: ubuntu-latest
+    needs: ghcr
+    permissions:
+      contents: read
+      packages: write   # cosign pushes signature/SBOM as sibling tags on GHCR
+      id-token: write   # OIDC for keyless signing — Sigstore Fulcio uses this
+                        # to bind a short-lived cert to the workflow's identity
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003  # v4.1.1
+      - name: Log in to GHCR (so cosign can push signatures + SBOM attestations)
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121  # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pin image by digest (signing by digest, not tag)
+        # Tags are mutable; digests are not. Signing the digest binds the
+        # signature to immutable bytes — a re-pushed `:v0.9.2` cannot replay
+        # an old signature. Build-push-action returned `digest` as output.
+        id: ref
+        env:
+          IMAGE: ${{ needs.ghcr.outputs.image }}
+          DIGEST: ${{ needs.ghcr.outputs.digest }}
+        run: echo "ref=${IMAGE%:*}@${DIGEST}" >> $GITHUB_OUTPUT
+
+      - name: cosign sign image (keyless, OIDC)
+        # Keyless = no long-lived signing key. Fulcio issues a short-lived
+        # cert bound to the workflow identity (
+        # https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/tags/v0.9.2)
+        # and the signature + cert end up in Sigstore's public Rekor
+        # transparency log. Anyone can verify with `cosign verify ...`.
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: cosign sign --yes "${{ steps.ref.outputs.ref }}"
+
+      - name: Generate container SBOM (CycloneDX + SPDX) via syft
+        # anchore/sbom-action wraps syft, which produces high-fidelity SBOMs
+        # by inspecting the actual built layers — packages, versions, licenses.
+        # Both formats because consumers vary: CycloneDX is what most SAST
+        # tools speak; SPDX is what regulators (US EO 14028, ISO/IEC 5962) ask
+        # for. Producing both costs ~10s and avoids future format-conversion.
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610  # v0.24.0
+        with:
+          image: ${{ steps.ref.outputs.ref }}
+          format: cyclonedx-json
+          output-file: sbom/ciguard-${{ github.ref_name }}-image.cdx.json
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610  # v0.24.0
+        with:
+          image: ${{ steps.ref.outputs.ref }}
+          format: spdx-json
+          output-file: sbom/ciguard-${{ github.ref_name }}-image.spdx.json
+
+      - name: cosign attest CycloneDX SBOM
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign attest --yes --type cyclonedx \
+            --predicate sbom/ciguard-${{ github.ref_name }}-image.cdx.json \
+            "${{ steps.ref.outputs.ref }}"
+
+      - name: cosign attest SPDX SBOM
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign attest --yes --type spdxjson \
+            --predicate sbom/ciguard-${{ github.ref_name }}-image.spdx.json \
+            "${{ steps.ref.outputs.ref }}"
+
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        with:
+          name: sbom-image
+          path: sbom/*.json
+          retention-days: 90
 
   trivy:
     name: Trivy scan published image
