@@ -128,15 +128,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pin image by digest (signing by digest, not tag)
+      - name: Prep SBOM output directory + pin image by digest
+        # syft (anchore/sbom-action) writes to `output-file` but won't
+        # create the parent dir — v0.9.2 attest job failed exactly here.
         # Tags are mutable; digests are not. Signing the digest binds the
-        # signature to immutable bytes — a re-pushed `:v0.9.2` cannot replay
+        # signature to immutable bytes — a re-pushed `:vX.Y.Z` cannot replay
         # an old signature. Build-push-action returned `digest` as output.
         id: ref
         env:
           IMAGE: ${{ needs.ghcr.outputs.image }}
           DIGEST: ${{ needs.ghcr.outputs.digest }}
-        run: echo "ref=${IMAGE%:*}@${DIGEST}" >> $GITHUB_OUTPUT
+        run: |
+          mkdir -p sbom
+          echo "ref=${IMAGE%:*}@${DIGEST}" >> $GITHUB_OUTPUT
 
       - name: cosign sign image (keyless, OIDC)
         # Keyless = no long-lived signing key. Fulcio issues a short-lived
