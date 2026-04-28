@@ -1,0 +1,58 @@
+name: Dogfood (ciguard scans ciguard)
+
+# Run ciguard against its own .github/workflows/*.yml and upload the SARIF
+# to GitHub Code Scanning. Two purposes:
+#
+#   1. Catch regressions — any change to our own CI hygiene becomes a
+#      Code-scanning alert before it lands on main.
+#   2. Visible proof we eat our own dog food. The Security tab → Code
+#      scanning view shows ciguard alongside CodeQL.
+#
+# This workflow does NOT gate the build (no `needs:` link from anywhere).
+# It exists purely to surface findings in the Security UI.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'  # Monday 06:00 UTC — same slot as codeql + atheris
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  ciguard-self-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ciguard from this checkout
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Scan every workflow file, emit SARIF per workflow
+        run: |
+          mkdir -p sarif
+          for f in .github/workflows/*.yml; do
+            name=$(basename "$f" .yml)
+            # `--offline` keeps SCA HTTP off — air-gap-safe + reproducible.
+            # `|| true` because non-zero exit (Critical/High findings) must
+            # not block the upload step.
+            ciguard scan --input "$f" --format sarif \
+              --output "sarif/$name.sarif" --offline || true
+          done
+          ls -la sarif/
+
+      - uses: github/codeql-action/upload-sarif@b2f9ef845756500b97acbdaf5c1dd4e9c1d15734  # v3.35.2
+        with:
+          sarif_file: sarif/
+          category: ciguard-self-scan

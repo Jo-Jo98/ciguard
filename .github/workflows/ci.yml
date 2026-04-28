@@ -10,6 +10,12 @@ on:
     branches: [main]
   pull_request:
 
+# Default to read-only at the workflow level. Reusable callers must declare
+# their own perms anyway, but this stops any future inline job here from
+# silently inheriting the GitHub default. Closes GHA-IAM-005 self-flag.
+permissions:
+  contents: read
+
 jobs:
   checks:
     uses: ./.github/workflows/_checks.yml

@@ -1,0 +1,42 @@
+name: CodeQL
+
+# GitHub-managed semantic source-code scanning. Complements ciguard's own
+# pipeline rules — different surface area: CodeQL flags Python-source vulns
+# (path traversal, command injection, taint flows), ciguard flags pipeline
+# misconfig. Findings appear on the repo Security tab → Code scanning.
+#
+# Schedule: weekly Monday 06:00 UTC. Same cadence as atheris-fuzz.yml so
+# the security-task burst lands on the same day.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze (python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: github/codeql-action/init@b2f9ef845756500b97acbdaf5c1dd4e9c1d15734  # v3.35.2
+        with:
+          languages: python
+          # `security-and-quality` widens beyond the default `security-extended`
+          # to include code-quality queries — fine on a small codebase like this
+          # where signal-to-noise stays high. Drop to `security-extended` if it
+          # ever becomes noisy.
+          queries: security-and-quality
+
+      - uses: github/codeql-action/analyze@b2f9ef845756500b97acbdaf5c1dd4e9c1d15734  # v3.35.2
+        with:
+          category: '/language:python'

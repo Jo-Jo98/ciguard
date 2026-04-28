@@ -18,6 +18,11 @@ name: Checks
 on:
   workflow_call:
 
+# Default to read-only — every job here is a pure-quality check (test, lint,
+# bandit, pip-audit, regression PoC replays). Closes GHA-IAM-005 self-flag.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
