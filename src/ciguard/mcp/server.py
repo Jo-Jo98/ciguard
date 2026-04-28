@@ -142,6 +142,51 @@ def _platform_for_target(target) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Workspace allowlist (v0.9.1, issue #10)
+# ---------------------------------------------------------------------------
+# Defence-in-depth on CYCLE-1-001 (GHSA-8cxw-cc62-q28v). Cycle 1's symlink
+# fix prevents discovery from following symlinks *out of* the scan root; this
+# prevents the scan root itself being attacker-influenced via an adversarial
+# MCP-client prompt ("scan /etc/...", "scan ~/.aws/..."). Operator opt-in via
+# CIGUARD_MCP_ROOT — empty value preserves the v0.8.x behaviour.
+
+import os as _os
+
+
+def _allowed_root() -> Optional[Path]:
+    raw = _os.environ.get("CIGUARD_MCP_ROOT")
+    if not raw or not raw.strip():
+        return None
+    return Path(raw.strip()).expanduser().resolve()
+
+
+def _enforce_workspace(path: Path) -> Optional[Dict[str, Any]]:
+    """Return an error dict iff `path` falls outside CIGUARD_MCP_ROOT.
+
+    `None` means the call is allowed (either because the gate is off or
+    because the path resolves inside the allowlist). `expanduser` runs first
+    so `~/...` paths from MCP clients work as expected; `resolve` collapses
+    any `..` traversal before the prefix check.
+    """
+    root = _allowed_root()
+    if root is None:
+        return None
+    target = Path(path).expanduser().resolve()
+    try:
+        target.relative_to(root)
+    except ValueError:
+        return {
+            "error": (
+                f"Path {path} is outside CIGUARD_MCP_ROOT={root}. The MCP "
+                "server is configured to refuse paths outside the workspace "
+                "allowlist. Ask the operator to widen CIGUARD_MCP_ROOT or "
+                "move the target inside it."
+            ),
+        }
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Tool handlers
 # ---------------------------------------------------------------------------
 
@@ -150,11 +195,15 @@ def _tool_scan(args: Dict[str, Any]) -> Dict[str, Any]:
     file_path = Path(args["file_path"]).expanduser()
     if not file_path.exists():
         return {"error": f"File not found: {file_path}"}
+    if (deny := _enforce_workspace(file_path)) is not None:
+        return deny
     platform = args.get("platform", "auto")
     offline = bool(args.get("offline", False))
     no_ignore = bool(args.get("no_ignore_file", False))
     ignore_file = args.get("ignore_file")
     ignore_path = Path(ignore_file).expanduser() if ignore_file else None
+    if ignore_path is not None and (deny := _enforce_workspace(ignore_path)) is not None:
+        return deny
     report = _scan_one(
         file_path,
         platform=platform,
@@ -167,8 +216,11 @@ def _tool_scan(args: Dict[str, Any]) -> Dict[str, Any]:
 
 def _tool_scan_repo(args: Dict[str, Any]) -> Dict[str, Any]:
     from ..repo_scan import scan_repo
+    repo_path = Path(args["repo_path"]).expanduser()
+    if (deny := _enforce_workspace(repo_path)) is not None:
+        return deny
     return scan_repo(
-        Path(args["repo_path"]).expanduser(),
+        repo_path,
         offline=bool(args.get("offline", False)),
         fail_on=args.get("fail_on"),
         no_ignore_file=bool(args.get("no_ignore_file", False)),
@@ -212,6 +264,10 @@ def _tool_diff_baseline(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"File not found: {file_path}"}
     if not baseline_path.exists():
         return {"error": f"Baseline not found: {baseline_path}"}
+    if (deny := _enforce_workspace(file_path)) is not None:
+        return deny
+    if (deny := _enforce_workspace(baseline_path)) is not None:
+        return deny
 
     from ..analyzer.baseline import compute_delta, load_baseline
 

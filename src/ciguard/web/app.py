@@ -22,7 +22,7 @@ from pathlib import Path
 # Allow running as `python -m src.web.app` from the project root
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
@@ -31,6 +31,7 @@ from ciguard.parser.github_actions import parse_file as auto_parse_file
 from ciguard.parser.gitlab_parser import GitLabCIParser
 from ciguard.parser.jenkinsfile import JenkinsfileParser, looks_like_jenkinsfile
 from ciguard.reporter.html_report import HTMLReporter
+from ciguard.web.auth import require_token, warn_if_public_bind_unauthenticated
 from ciguard.web.scan_store import get_store
 from ciguard.web.security_headers import SecurityHeadersMiddleware
 
@@ -61,11 +62,17 @@ _reporter = HTMLReporter()
 
 @app.get("/api/health", tags=["api"])
 def api_health():
-    """Health check — returns 200 when the service is ready."""
+    """Health check — returns 200 when the service is ready.
+
+    Deliberately UNGATED: monitoring tools (k8s liveness probes, uptime
+    checks, load balancer health checks) need to hit this without owning
+    the bearer token. Returns no scan content; the only metadata is a
+    rough scan-store size, which is not sensitive.
+    """
     return {"status": "ok", "version": "0.4.0", "scans_in_memory": len(get_store())}
 
 
-@app.post("/api/scan", tags=["api"])
+@app.post("/api/scan", tags=["api"], dependencies=[Depends(require_token)])
 async def api_scan(file: UploadFile = File(..., description="A GitLab CI .yml, GitHub Actions workflow, or Jenkinsfile (Declarative Pipeline)")):
     """Upload and scan a pipeline file. Platform (GitLab CI / GitHub Actions /
     Jenkins Declarative Pipeline) is auto-detected: filename or content sniff
@@ -132,7 +139,7 @@ async def api_scan(file: UploadFile = File(..., description="A GitLab CI .yml, G
     }
 
 
-@app.get("/api/report/{scan_id}", tags=["api"])
+@app.get("/api/report/{scan_id}", tags=["api"], dependencies=[Depends(require_token)])
 def api_report_json(scan_id: str):
     """Return the full scan report as JSON."""
     report = get_store().get(scan_id)
@@ -141,7 +148,8 @@ def api_report_json(scan_id: str):
     return report.model_dump(mode="json")
 
 
-@app.get("/api/report/{scan_id}/html", tags=["api"], response_class=HTMLResponse)
+@app.get("/api/report/{scan_id}/html", tags=["api"], response_class=HTMLResponse,
+         dependencies=[Depends(require_token)])
 def api_report_html(scan_id: str):
     """Return the self-contained HTML report."""
     report = get_store().get(scan_id)
@@ -160,7 +168,8 @@ def ui_upload(request: Request):
     return templates.TemplateResponse(request, "upload.html", {})
 
 
-@app.get("/report/{scan_id}", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/report/{scan_id}", response_class=HTMLResponse, include_in_schema=False,
+         dependencies=[Depends(require_token)])
 def ui_report(request: Request, scan_id: str):
     return templates.TemplateResponse(request, "results.html", {"scan_id": scan_id})
 
@@ -171,4 +180,8 @@ def ui_report(request: Request, scan_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("src.web.app:app", host="0.0.0.0", port=8080, reload=True)  # nosec B104 - dev-only entrypoint; container deployments override host via uvicorn CLI
+    _host = "0.0.0.0"  # nosec B104 - dev runner; ops override via `uvicorn ... --host`
+    _warn = warn_if_public_bind_unauthenticated(_host)
+    if _warn:
+        print(f"\n\033[93m⚠️  WARNING:\033[0m {_warn}\n", file=sys.stderr)
+    uvicorn.run("src.web.app:app", host=_host, port=8080, reload=True)

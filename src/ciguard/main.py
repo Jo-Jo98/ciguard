@@ -62,6 +62,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
         print(f"{_RED}Error:{_RESET} File not found: {input_path}", file=sys.stderr)
         return 1
 
+    if getattr(args, "no_scanners", False):
+        import os
+        os.environ["CIGUARD_NO_SCANNERS"] = "1"
+
     step = 1
     total_steps = 3
     if args.llm:
@@ -193,6 +197,26 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
     # ---- LLM enrichment (optional)
     if args.llm:
+        # v0.9.1 (issue #12): require explicit --llm-consent acknowledgement
+        # before sending any payload to a third-party provider. Without it,
+        # error out with a one-time message naming exactly what would be sent.
+        if not getattr(args, "llm_consent", False):
+            print(
+                f"\n{_RED}Error:{_RESET} --llm requires --llm-consent.\n"
+                f"  LLM enrichment will send the following to "
+                f"{args.llm_provider or 'the configured provider'}:\n"
+                f"    - rule names, severities, categories\n"
+                f"    - finding locations and pipeline name "
+                f"({_BOLD}use --redact-locations to hash these{_RESET})\n"
+                f"    - finding descriptions, remediation text, compliance mappings\n"
+                f"  Evidence fields (which may contain masked credential fragments) "
+                f"are always stripped.\n"
+                f"\n  Re-run with --llm-consent to acknowledge, or omit --llm "
+                f"to skip enrichment.",
+                file=sys.stderr,
+            )
+            return 1
+
         from ciguard.llm.client import detect_provider
         from ciguard.llm.enricher import enrich_report
 
@@ -204,13 +228,21 @@ def cmd_scan(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
         else:
+            redact = getattr(args, "redact_locations", False)
+            redact_label = " [redacted locations]" if redact else ""
             print(
-                f"{_DIM}[{step}/{total_steps}]{_RESET} Generating insights via {provider} ...",
+                f"{_DIM}[{step}/{total_steps}]{_RESET} Generating insights via "
+                f"{provider}{redact_label} ...",
                 end=" ", flush=True,
             )
             step += 1
             try:
-                insights = enrich_report(report, provider=provider, model=args.llm_model)
+                insights = enrich_report(
+                    report,
+                    provider=provider,
+                    model=args.llm_model,
+                    redact_locations=redact,
+                )
                 report.llm_insights = insights
                 print(f"{_GREEN}OK{_RESET}  (model: {insights.model_used})")
             except Exception as exc:
@@ -447,6 +479,10 @@ def cmd_scan_repo(args: argparse.Namespace) -> int:
         print(f"{_RED}Error:{_RESET} Path not found: {repo_path}", file=sys.stderr)
         return 2
 
+    if getattr(args, "no_scanners", False):
+        import os
+        os.environ["CIGUARD_NO_SCANNERS"] = "1"
+
     print(f"{_DIM}Scanning {repo_path} ...{_RESET}", flush=True)
     result = scan_repo(
         repo_path,
@@ -654,12 +690,35 @@ def main() -> int:
         "--llm-model", default=None,
         help="Override the LLM model (e.g. claude-haiku-4-5-20251001, gpt-4o-mini).",
     )
+    # ---- LLM privacy flags (v0.9.1, issue #12)
+    scan_parser.add_argument(
+        "--llm-consent", action="store_true", default=False,
+        help="Acknowledge that --llm sends rule/location/description/compliance "
+             "metadata to the third-party LLM provider. Required when --llm is "
+             "set; ciguard refuses to call the LLM otherwise. Evidence fields "
+             "(which may contain masked credential fragments) are always stripped.",
+    )
+    scan_parser.add_argument(
+        "--redact-locations", action="store_true", default=False,
+        help="Hash finding locations and the pipeline name before they reach "
+             "the LLM provider. Insights stay rule-level actionable; only your "
+             "file-system layout is concealed. Recommended for regulated workloads.",
+    )
     # ---- SCA flags (v0.6)
     scan_parser.add_argument(
         "--offline", action="store_true", default=False,
         help="Disable network lookups for SCA enrichment (endoflife.date EOL "
              "data). Uses on-disk cache only. Required for air-gapped CI "
              "environments. Cache lives at `~/.ciguard/cache/` by default.",
+    )
+
+    # ---- Hardened-mode flag (v0.9.1, issue #13)
+    scan_parser.add_argument(
+        "--no-scanners", action="store_true", default=False,
+        help="Disable all external-binary scanner integrations (Semgrep, "
+             "OpenSSF Scorecard, GitLab native). Sets `CIGUARD_NO_SCANNERS=1` "
+             "so any in-process caller honours it. Use alongside `--offline` "
+             "for fully hardened, network-free runs. See README → Network Egress.",
     )
 
     # ---- .ciguardignore flags (v0.7)
@@ -726,6 +785,11 @@ def main() -> int:
         "--offline", action="store_true", default=False,
         help="Disable SCA HTTP lookups (endoflife.date, OSV.dev). Uses the "
              "on-disk cache only — required for air-gapped CI runners.",
+    )
+    scan_repo_parser.add_argument(
+        "--no-scanners", action="store_true", default=False,
+        help="Disable external-binary scanner integrations (Semgrep, "
+             "Scorecard, GitLab native). Sets CIGUARD_NO_SCANNERS=1.",
     )
     scan_repo_parser.add_argument(
         "--no-ignore-file", action="store_true", default=False,

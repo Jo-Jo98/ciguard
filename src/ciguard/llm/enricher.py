@@ -7,11 +7,19 @@ Takes a scan Report and generates plain-language insights:
 - Compliance impact statement
 - Risk narrative explaining cumulative exposure
 
-PRIVACY: evidence fields (which may contain masked credential fragments)
-are stripped before the payload is sent to the LLM.
+PRIVACY (defaults):
+  - evidence fields (which may contain masked credential fragments) are
+    stripped before the payload is sent to the LLM.
+
+PRIVACY (opt-in for regulated environments — issue #12, v0.9.1):
+  - `redact_locations=True` hashes finding locations + the pipeline name
+    before send. Trade-off: insights stay actionable at the rule/severity
+    level, but the LLM cannot reference your file paths or pipeline
+    structure verbatim.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from typing import Optional
@@ -28,18 +36,32 @@ _SYSTEM_PROMPT = (
 )
 
 
-def _sanitise_finding(finding: Finding) -> dict:
+def _redact(value: str) -> str:
+    """Stable 8-char SHA-256 prefix. Same input → same hash within a scan, so
+    the LLM can still cluster findings by location without the LLM (or its
+    operator) ever seeing the raw path. Prefixed with `redacted:` so anyone
+    reading a transcript can tell at a glance the value was redacted."""
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
+    return f"redacted:{digest}"
+
+
+def _sanitise_finding(finding: Finding, *, redact_locations: bool = False) -> dict:
     """Return a finding dict safe for sending to the LLM.
 
-    The ``evidence`` field is excluded — it may contain masked credential
+    The ``evidence`` field is always excluded — it may contain masked credential
     fragments (e.g. ``mySecr****``) that should never leave the host.
+
+    With ``redact_locations=True`` (CLI ``--redact-locations``), the location
+    string is also hashed. Compliance / severity / rule_id / description /
+    remediation still go through; those are tool metadata and don't reveal
+    customer pipeline structure.
     """
     return {
         "rule_id": finding.rule_id,
         "name": finding.name,
         "severity": finding.severity.value,
         "category": finding.category.value,
-        "location": finding.location,
+        "location": _redact(finding.location) if redact_locations else finding.location,
         "description": finding.description,
         "remediation": finding.remediation,
         "compliance": {
@@ -50,7 +72,7 @@ def _sanitise_finding(finding: Finding) -> dict:
     }
 
 
-def _build_prompt(report: Report) -> str:
+def _build_prompt(report: Report, *, redact_locations: bool = False) -> str:
     score = report.risk_score
     by_sev = report.summary.get("by_severity", {})
 
@@ -61,8 +83,12 @@ def _build_prompt(report: Report) -> str:
     ][:10]
 
     findings_json = json.dumps(
-        [_sanitise_finding(f) for f in top_findings],
+        [_sanitise_finding(f, redact_locations=redact_locations) for f in top_findings],
         indent=2,
+    )
+
+    pipeline_label = (
+        _redact(report.pipeline_name) if redact_locations else report.pipeline_name
     )
 
     category_block = "\n".join([
@@ -76,7 +102,7 @@ def _build_prompt(report: Report) -> str:
 
     return f"""Analyse this CI/CD security scan and respond with a JSON object.
 
-PIPELINE: {report.pipeline_name}
+PIPELINE: {pipeline_label}
 OVERALL SCORE: {score.overall}/100  (Grade {score.grade})
 TOTAL FINDINGS: {report.summary.get("total", 0)}
   Critical : {by_sev.get("Critical", 0)}
@@ -107,17 +133,25 @@ def enrich_report(
     report: Report,
     provider: str = "anthropic",
     model: Optional[str] = None,
+    *,
+    redact_locations: bool = False,
 ) -> LLMInsights:
     """Generate LLM insights for the given report.
 
     Returns an LLMInsights object ready to attach to report.llm_insights.
     Raises RuntimeError if the API key is missing or the call fails.
+
+    `redact_locations=True` (CLI `--redact-locations`) hashes finding
+    locations + pipeline name before they reach the LLM. Use for regulated
+    workloads (banking / healthcare / gov) where even file paths are
+    sensitive. Insights stay rule-level actionable; only the file-system
+    layout is concealed.
     """
     resolved_model = model or (
         DEFAULT_ANTHROPIC_MODEL if provider == "anthropic" else DEFAULT_OPENAI_MODEL
     )
 
-    prompt = _build_prompt(report)
+    prompt = _build_prompt(report, redact_locations=redact_locations)
     raw = call_llm(prompt, _SYSTEM_PROMPT, provider=provider, model=resolved_model)
 
     # Parse the JSON response; handle LLMs that add preamble text

@@ -216,6 +216,29 @@ repos:
 
 The hook auto-matches `.gitlab-ci.yml`, `.github/workflows/*.yml`, `Jenkinsfile`, and `*.groovy`. Blocks the commit on Critical / High findings (exit codes `2` / `1`).
 
+## Network egress (corporate / hardened deployments)
+
+Every outbound network call ciguard can make, why it makes it, and how to disable it. Useful for security teams that need to whitelist or air-gap.
+
+| Destination | When | Disable with |
+|---|---|---|
+| `api.osv.dev` | SCA CVE lookups for GitHub Actions / reusable workflows (rule `SCA-CVE-001`) | `--offline` |
+| `endoflife.date` | SCA EOL/EOS lookups for container base images + language runtimes (rules `SCA-EOL-001/002/003`, `SCA-EOS-001`) | `--offline` |
+| `api.anthropic.com` / `api.openai.com` | LLM enrichment (executive summary + remediation) — **opt-in only** | omit `--llm` (default) |
+| Semgrep registry, OpenSSF Scorecard | External scanner integrations — only run when their binaries are installed and present on PATH | `--no-scanners` (or `CIGUARD_NO_SCANNERS=1`) |
+
+`--offline` covers the SCA path: cache-only reads, no HTTP. `--no-scanners` disables the external-binary lane (Semgrep / Scorecard / GitLab native) entirely. Use both together for a fully hardened, network-free run:
+
+```bash
+ciguard scan-repo . --offline --no-scanners
+```
+
+LLM enrichment is opt-in via `--llm` and never runs by default. When opted in, ciguard sends rule names, locations, finding descriptions, and compliance mappings (evidence is stripped before send) to the configured provider. Regulated users should pass `--llm-consent` to acknowledge and `--redact-locations` to additionally hash file paths and pipeline names before they reach the LLM (see `ciguard scan --help`).
+
+The `mcp` server reads/writes only the local filesystem (no outbound network). Set `CIGUARD_MCP_ROOT=/path/to/workspace` to refuse paths outside an allowlist — defence-in-depth against adversarial-prompt path-traversal in AI-agent flows.
+
+The web API reads/writes only the local in-memory scan store. Set `CIGUARD_WEB_TOKEN=<random>` to require `Authorization: Bearer <token>` on `/api/scan`, `/api/report/*`, and `/report/*` — required for any non-loopback bind.
+
 ## Running with Docker
 
 ```bash
