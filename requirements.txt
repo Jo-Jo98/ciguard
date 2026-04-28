@@ -4,9 +4,9 @@ pydantic==2.13.3
 Jinja2==3.1.6
 
 # Web API
-fastapi==0.128.8
-uvicorn[standard]==0.39.0
-python-multipart==0.0.26   # CVE fix: GHSA-wp53-j4wj-2cfg, GHSA-mj87-hwqh-73pj
+fastapi==0.136.1
+uvicorn[standard]==0.46.0
+python-multipart==0.0.27   # CVE fix: GHSA-wp53-j4wj-2cfg, GHSA-mj87-hwqh-73pj
 python-dotenv>=1.2.2        # transitive of uvicorn[standard]; ≥1.2.2 for GHSA-mf9w-mj56-hr94
 
 # PDF export (Slice 5)
