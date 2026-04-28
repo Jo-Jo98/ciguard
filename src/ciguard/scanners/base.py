@@ -38,17 +38,13 @@ class ScannerBase(ABC):
     @abstractmethod
     def name(self) -> str:
         """Short lower-case identifier, e.g. 'semgrep'."""
-        ...
 
     @abstractmethod
     def is_available(self) -> bool:
         """Return True if the underlying CLI tool is installed."""
-        ...
 
     @abstractmethod
     def scan(self, path: Path) -> List[ScannerFinding]:
-        """
-        Run the scanner against ``path`` (a file or directory).
+        """Run the scanner against ``path`` (a file or directory).
         Returns scanner findings.  Must not raise — return [] on error.
         """
-        ...

@@ -152,6 +152,8 @@ class OSVClient:
         try:
             path.write_text(json.dumps(data), encoding="utf-8")
         except OSError:
+            # Cache write is best-effort — permission denied on $HOME or
+            # full disk shouldn't fail the SCA lookup. Next call rebuilds.
             pass
 
     def _cache_stale(self, ecosystem: str, package: str, version: str) -> bool:

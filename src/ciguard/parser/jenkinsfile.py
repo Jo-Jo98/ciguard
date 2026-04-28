@@ -149,11 +149,6 @@ def _find_matching_brace(src: str, open_idx: int) -> int:
     return -1
 
 
-# Match a directive header: `name` or `name(args)` followed by `{` or a value.
-# Captures the name as group 1 and any parenthesised args as group 2.
-_DIRECTIVE_HEADER_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*(\([^)]*\))?\s*", re.DOTALL)
-
-
 def _extract_block(src: str, name: str, start: int = 0) -> Optional[Tuple[int, int, str]]:
     """Find the first `<name> { ... }` block at brace-depth 0 of `src`,
     starting at offset `start`. Skips matches inside nested braces and

@@ -336,7 +336,7 @@ class Report(BaseModel):
     scan_timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     findings: List[Finding] = Field(default_factory=list)
     risk_score: RiskScore
-    pipeline: Pipeline = Field(default_factory=lambda: Pipeline())
+    pipeline: Pipeline = Field(default_factory=Pipeline)
     workflow: Optional[Any] = None        # ciguard.models.workflow.Workflow — Optional import avoids circular dep
     platform: str = "gitlab-ci"           # "gitlab-ci" | "github-actions"
     summary: Dict[str, Any] = Field(default_factory=dict)

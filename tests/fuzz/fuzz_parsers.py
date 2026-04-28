@@ -83,5 +83,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    import yaml  # noqa: F401  imported here so atheris.instrument_imports above doesn't fail on it
+    # Force-import yaml here so atheris.instrument_imports (above) instruments
+    # the parsers' YAML lib alongside ciguard. The reference assignment below
+    # ensures static analysers see the import as used.
+    import yaml
+    _ = yaml.__name__
     main()

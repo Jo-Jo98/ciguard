@@ -179,6 +179,8 @@ def _classify(path: Path) -> Optional[str]:
             if _PIPELINE_MARKER.search(head):
                 return "jenkins"
         except OSError:
+            # Best-effort content sniff. Permission denied / I/O error on a
+            # discovery walk is not fatal — fall through and skip the file.
             pass
 
     return None

@@ -322,14 +322,16 @@ class PDFReporter:
                     if order.index(f.severity.value) < order.index(stage_severity[stage]):
                         stage_severity[stage] = f.severity.value
 
-        cells = []
-        for i, stage in enumerate(stages):
-            sev = stage_severity.get(stage)
-            bg = _SEV_COLOUR.get(sev, _PASS_GREEN) if sev else _PASS_GREEN
-            cells.append(Paragraph(
+        # Two passes: first build the cell paragraphs (text only), then
+        # compute per-cell `bg` colours for the TableStyle commands below.
+        # Splitting the loops keeps the BACKGROUND style commands grouped.
+        cells = [
+            Paragraph(
                 f'<font color="white"><b>{_esc(stage)}</b></font>',
                 styles["StageLabel"]
-            ))
+            )
+            for stage in stages
+        ]
 
         col_width = max(2*cm, min(4*cm, 16*cm / max(len(stages), 1)))
         row = [cells]
@@ -795,14 +797,6 @@ class PDFReporter:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-_POLICY_SEV_COLOUR_RL = {
-    "critical": _CRITICAL,
-    "high":     _HIGH,
-    "medium":   _MEDIUM,
-    "low":      _LOW,
-}
-
 
 def _esc(text: str) -> str:
     """Escape XML special chars for ReportLab Paragraph."""

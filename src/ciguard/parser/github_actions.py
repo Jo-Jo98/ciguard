@@ -23,20 +23,6 @@ import yaml
 from ..models.workflow import Job, Step, Workflow
 
 
-# `on` is a Python keyword in 3.13's match-statement contexts; using it as a
-# bare attribute is fine but we alias the YAML key explicitly for clarity.
-_RESERVED_TOP_LEVEL = {
-    "name",
-    "on",
-    "permissions",
-    "env",
-    "defaults",
-    "concurrency",
-    "jobs",
-    "run-name",
-}
-
-
 class GitHubActionsParser:
     """Parse a single GitHub Actions workflow YAML file into a Workflow model."""
 
@@ -172,8 +158,6 @@ class GitHubActionsParser:
 # Format auto-detection
 # ---------------------------------------------------------------------------
 
-# Top-level keys that strongly suggest GitHub Actions:
-_GHA_HINT_KEYS = {"jobs", "on", "run-name"}
 # Top-level keys that strongly suggest GitLab CI:
 _GITLAB_HINT_KEYS = {"stages", "include", "before_script", "after_script", "default", "workflow"}
 

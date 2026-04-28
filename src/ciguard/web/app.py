@@ -51,7 +51,9 @@ app = FastAPI(
 )
 app.add_middleware(SecurityHeadersMiddleware)
 
-_parser = GitLabCIParser()
+# Per-request platform-specific parsing happens in api_scan(); the only
+# module-level use of GitLabCIParser is the MAX_FILE_BYTES class attribute
+# read on uploads, so we don't need an instance here.
 _engine = AnalysisEngine()
 _reporter = HTMLReporter()
 

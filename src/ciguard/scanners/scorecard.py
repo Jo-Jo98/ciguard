@@ -56,13 +56,15 @@ class ScorecardScanner(ScannerBase):
             log.debug("scorecard: no .git directory found at %s", repo_path)
             return []
 
+        # Single comma-separated --checks argument. Originally split over three
+        # implicitly-concatenated string literals; CodeQL flagged that as a
+        # potentially missing comma — collapsed to one string for clarity.
+        _CHECKS = "CI-Tests,CII-Best-Practices,Code-Review,Dangerous-Workflow,Pinned-Dependencies,Security-Policy,Token-Permissions"
         cmd = [
             "scorecard",
             f"--local={repo_path}",
             "--format=json",
-            "--checks=CI-Tests,CII-Best-Practices,Code-Review,"
-                    "Dangerous-Workflow,Pinned-Dependencies,"
-                    "Security-Policy,Token-Permissions",
+            f"--checks={_CHECKS}",
         ]
 
         try:
