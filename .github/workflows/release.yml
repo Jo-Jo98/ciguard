@@ -47,9 +47,12 @@ jobs:
         run: |
           mkdir -p sbom
           pip install --upgrade cyclonedx-bom
+          # cyclonedx-bom 7.x flags: `--of <format>` (NOT --output-format),
+          # `-o <file>` (NOT --outfile). The misleading naming bit v0.9.3's
+          # second attempt — confirmed against `cyclonedx-py requirements --help`.
           cyclonedx-py requirements requirements.txt \
-            --output-format JSON \
-            --outfile sbom/ciguard-${{ github.ref_name }}-python.cdx.json
+            --of JSON \
+            -o sbom/ciguard-${{ github.ref_name }}-python.cdx.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1 (Node 24)
         with:
           name: sbom-python-cyclonedx
