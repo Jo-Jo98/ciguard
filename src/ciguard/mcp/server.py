@@ -36,6 +36,7 @@ in-process API.
 from __future__ import annotations
 
 import json
+import os as _os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -149,8 +150,6 @@ def _platform_for_target(target) -> str:
 # prevents the scan root itself being attacker-influenced via an adversarial
 # MCP-client prompt ("scan /etc/...", "scan ~/.aws/..."). Operator opt-in via
 # CIGUARD_MCP_ROOT — empty value preserves the v0.8.x behaviour.
-
-import os as _os
 
 
 def _allowed_root() -> Optional[Path]:

@@ -10,14 +10,10 @@ Issue #11 (Dockerfile base bump) is verified by the regression-cycle1 job
 """
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-import pytest
 
 
 # ---- Issue #9: web API auth -------------------------------------------------
