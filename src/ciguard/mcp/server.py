@@ -168,62 +168,13 @@ def _tool_scan(args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _tool_scan_repo(args: Dict[str, Any]) -> Dict[str, Any]:
-    repo_path = Path(args["repo_path"]).expanduser()
-    if not repo_path.exists():
-        return {"error": f"Path not found: {repo_path}"}
-    offline = bool(args.get("offline", False))
-    fail_on = args.get("fail_on")  # None | "Critical" | "High" | ...
-    no_ignore = bool(args.get("no_ignore_file", False))
-
-    discovered = discover_pipeline_files(repo_path)
-    files: List[Dict[str, Any]] = []
-    by_severity: Dict[str, int] = {s.value: 0 for s in Severity}
-    total_findings = 0
-
-    for df in discovered:
-        try:
-            report = _scan_one(df.path, platform=df.platform,
-                               offline=offline, no_ignore=no_ignore)
-        except Exception as exc:
-            files.append({
-                "path": str(df.path.relative_to(repo_path)),
-                "platform": df.platform,
-                "error": str(exc),
-            })
-            continue
-        for f in report.findings:
-            sev = f.severity.value if hasattr(f.severity, "value") else str(f.severity)
-            by_severity[sev] = by_severity.get(sev, 0) + 1
-            total_findings += 1
-        files.append({
-            "path": str(df.path.relative_to(repo_path)),
-            "platform": df.platform,
-            "score": report.risk_score.overall,
-            "grade": report.risk_score.grade,
-            "findings_total": len(report.findings),
-            "findings_by_severity": dict(report.summary["by_severity"]),
-            "suppressed": len(report.suppressed),
-        })
-
-    fails_threshold = False
-    if fail_on:
-        order = ["Critical", "High", "Medium", "Low", "Info"]
-        if fail_on in order:
-            cutoff = order.index(fail_on)
-            for sev_name, count in by_severity.items():
-                if sev_name in order and order.index(sev_name) <= cutoff and count > 0:
-                    fails_threshold = True
-                    break
-
-    return {
-        "repo_path": str(repo_path),
-        "files_scanned": len(files),
-        "total_findings": total_findings,
-        "by_severity": by_severity,
-        "fail_on": fail_on,
-        "fails_threshold": fails_threshold,
-        "files": files,
-    }
+    from ..repo_scan import scan_repo
+    return scan_repo(
+        Path(args["repo_path"]).expanduser(),
+        offline=bool(args.get("offline", False)),
+        fail_on=args.get("fail_on"),
+        no_ignore_file=bool(args.get("no_ignore_file", False)),
+    )
 
 
 def _tool_explain_rule(args: Dict[str, Any]) -> Dict[str, Any]:

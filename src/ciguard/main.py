@@ -430,6 +430,102 @@ def cmd_baseline(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_scan_repo(args: argparse.Namespace) -> int:
+    """Discover and scan every pipeline file under a directory tree.
+
+    Slice 9 / v0.9.0. Wraps `repo_scan.scan_repo` with a terminal table,
+    aggregate severity summary, optional JSON output (`--output`), and
+    `--fail-on` threshold gating. Exit code:
+      0 — clean (or `--fail-on` not breached)
+      1 — `--fail-on` breached
+      2 — bad arguments / scan path missing
+    """
+    from ciguard.repo_scan import scan_repo
+
+    repo_path = Path(args.repo_path)
+    if not repo_path.exists():
+        print(f"{_RED}Error:{_RESET} Path not found: {repo_path}", file=sys.stderr)
+        return 2
+
+    print(f"{_DIM}Scanning {repo_path} ...{_RESET}", flush=True)
+    result = scan_repo(
+        repo_path,
+        offline=args.offline,
+        fail_on=(None if args.fail_on == "none" else args.fail_on),
+        no_ignore_file=args.no_ignore_file,
+    )
+
+    if "error" in result:
+        print(f"{_RED}Error:{_RESET} {result['error']}", file=sys.stderr)
+        return 2
+
+    files = result["files"]
+    if not files:
+        print(f"{_YELLOW}No pipeline files discovered under {repo_path}.{_RESET}")
+        print(f"  {_DIM}Discovery looks for .gitlab-ci.yml, .github/workflows/*.yml, "
+              f"Jenkinsfile, *.jenkinsfile, and *.groovy with pipeline markers.{_RESET}")
+        # Still write an empty result if --output was given
+        if args.output:
+            _write_repo_scan_output(args.output, result)
+        return 0
+
+    grade_colours = {"A": _GREEN, "B": _CYAN, "C": _YELLOW, "D": _YELLOW, "F": _RED}
+    print(f"\n{_BOLD}{'=' * 78}{_RESET}")
+    print(f"{_BOLD}  ciguard Repo Scan — {repo_path}{_RESET}")
+    print(f"{'=' * 78}")
+    print(f"  {result['files_scanned']} pipeline file(s) discovered\n")
+
+    # Per-file table
+    print(f"  {_BOLD}{'Path':<46} {'Platform':<14} {'Grade':<8} {'Findings':>9}{_RESET}")
+    print(f"  {'─' * 76}")
+    for f in files:
+        path = f["path"]
+        if len(path) > 44:
+            path = "…" + path[-43:]
+        if "error" in f:
+            print(f"  {path:<46} {f['platform']:<14} {_RED}{'ERR':<8}{_RESET} "
+                  f"{_DIM}{f['error'][:30]}{_RESET}")
+            continue
+        gc = grade_colours.get(f["grade"], _RESET)
+        grade_label = f"{f['grade']} {f['score']:.0f}"
+        print(f"  {path:<46} {f['platform']:<14} {gc}{grade_label:<8}{_RESET} "
+              f"{f['findings_total']:>9}")
+
+    # Aggregate
+    print(f"\n  {_BOLD}Aggregate findings: {result['total_findings']}{_RESET}")
+    by_sev = result["by_severity"]
+    bits = []
+    for sev_name in ["Critical", "High", "Medium", "Low", "Info"]:
+        count = by_sev.get(sev_name, 0)
+        if count > 0:
+            sev_enum = Severity(sev_name)
+            colour = _SEV_COLOUR[sev_enum]
+            bits.append(f"{colour}{sev_name} {count}{_RESET}")
+    if bits:
+        print(f"  {'  '.join(bits)}")
+    else:
+        print(f"  {_GREEN}No findings.{_RESET}")
+
+    # Threshold
+    if args.fail_on != "none":
+        if result["fails_threshold"]:
+            print(f"\n  {_RED}{_BOLD}FAIL{_RESET}  threshold `--fail-on={args.fail_on}` breached.")
+        else:
+            print(f"\n  {_GREEN}{_BOLD}PASS{_RESET}  threshold `--fail-on={args.fail_on}` not breached.")
+
+    if args.output:
+        _write_repo_scan_output(args.output, result)
+        print(f"\n  Aggregate JSON written to {args.output}")
+
+    print()
+    return 1 if (args.fail_on != "none" and result["fails_threshold"]) else 0
+
+
+def _write_repo_scan_output(output_path: str, result: dict) -> None:
+    import json
+    Path(output_path).write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
+
+
 def _print_terminal_report(report) -> None:
     import textwrap
 
@@ -601,6 +697,42 @@ def main() -> int:
              "all severity-based exit codes (returns 0 unless an error occurred).",
     )
 
+    # ---- `scan-repo` subcommand (v0.9.0): walk a directory tree, scan
+    # every recognised pipeline file, print a per-file table + aggregate
+    # severity counts, and exit non-zero when `--fail-on` is breached.
+    # Discovery foundation shipped with v0.8.x for the MCP `scan_repo`
+    # tool; this slice exposes it as a first-class CLI verb.
+    scan_repo_parser = subparsers.add_parser(
+        "scan-repo",
+        help="Auto-discover and scan every pipeline file under a directory.",
+    )
+    scan_repo_parser.add_argument(
+        "repo_path",
+        help="Path to the repository root to scan.",
+    )
+    scan_repo_parser.add_argument(
+        "--output", "-o", default=None,
+        help="Path to write the aggregate JSON result (per-file summaries + "
+             "totals). Terminal report is always printed.",
+    )
+    scan_repo_parser.add_argument(
+        "--fail-on", default="none",
+        choices=["Critical", "High", "Medium", "Low", "Info", "none"],
+        help="Exit non-zero (1) if any finding at this severity or above "
+             "appears across the scan. `none` (default) makes the command "
+             "purely informational — exit 0 unless an error occurred.",
+    )
+    scan_repo_parser.add_argument(
+        "--offline", action="store_true", default=False,
+        help="Disable SCA HTTP lookups (endoflife.date, OSV.dev). Uses the "
+             "on-disk cache only — required for air-gapped CI runners.",
+    )
+    scan_repo_parser.add_argument(
+        "--no-ignore-file", action="store_true", default=False,
+        help="Disable .ciguardignore discovery and processing. Useful for "
+             "verifying baseline posture without per-file suppressions.",
+    )
+
     # ---- `mcp` subcommand (v0.8.0): launch the MCP stdio server. No CLI
     # output (would corrupt the stdio protocol). Requires the optional
     # `mcp` extra: `pip install 'ciguard[mcp]'`. Exits non-zero with a
@@ -662,6 +794,8 @@ def main() -> int:
             )
             return 1
         return cmd_scan(args)
+    elif args.command == "scan-repo":
+        return cmd_scan_repo(args)
     elif args.command == "baseline":
         return cmd_baseline(args)
     elif args.command == "mcp":

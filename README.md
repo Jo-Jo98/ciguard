@@ -37,6 +37,11 @@ pip install -e .
 # Scan a pipeline (terminal summary)
 ciguard scan --input .gitlab-ci.yml
 
+# Scan an entire repository (auto-discovers every pipeline file under the path)
+ciguard scan-repo .
+ciguard scan-repo . --fail-on High           # gate CI on aggregate severity
+ciguard scan-repo . --output ciguard.json    # write the aggregate JSON
+
 # HTML report
 ciguard scan --input .gitlab-ci.yml --output report.html
 
