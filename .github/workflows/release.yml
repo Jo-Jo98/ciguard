@@ -230,3 +230,33 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
           vuln-type: "os,library"
+
+  gh-release:
+    name: Create GitHub Release page
+    runs-on: ubuntu-latest
+    # Wait for every artifact-publishing + attestation step before creating
+    # the public Release page — users following the README's `cosign verify`
+    # recipe land here expecting signatures + SBOMs to already exist.
+    needs: [pypi, ghcr, attest, trivy]
+    permissions:
+      contents: write  # required for `gh release create`
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Extract this version's section from CHANGELOG.md
+        id: notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          {
+            echo 'body<<EOF_NOTES'
+            python3 scripts/extract_changelog_section.py "$VERSION"
+            echo 'EOF_NOTES'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "${{ steps.notes.outputs.body }}"
