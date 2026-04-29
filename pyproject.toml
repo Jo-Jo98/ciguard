@@ -58,6 +58,13 @@ fuzz = [
     # so base install stays lean (atheris pulls in clang headers).
     "atheris>=2.3",
 ]
+app = [
+    # GitHub App surface (v0.10.0). PyJWT[crypto] adds RS256 support via
+    # `cryptography` for signing the App-level JWT we exchange with GitHub
+    # for installation-scoped tokens. Optional extra so `pip install ciguard`
+    # stays lean (cryptography is ~30MB on top of the base install).
+    "PyJWT[crypto]>=2.8",
+]
 
 [project.urls]
 Homepage = "https://github.com/Jo-Jo98/ciguard"
