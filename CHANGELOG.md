@@ -3,6 +3,28 @@
 All notable changes to `ciguard` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.4] — 2026-04-29
+
+**Drop-in CI templates — Slice 9 carve-out.** Pre-built workflow files for the three supported platforms (GitHub Actions, GitLab CI, Jenkins) so users can wire ciguard into their CI in one paste. No Python source changes; this release is templates-only.
+
+### Added
+
+- **`templates/github-actions/ciguard-scan.yml`** — minimal scan + JSON artifact, informational. Zero-config first run.
+- **`templates/github-actions/ciguard-scan-baseline.yml`** — full v0.5 baseline workflow showcase. Diffs against `.ciguard/baseline.json`, fails on new High+, uploads SARIF to GitHub Code Scanning.
+- **`templates/github-actions/ciguard-scan-repo.yml`** — monorepo template. Auto-discovers every recognised pipeline file under the repo root via the v0.9.0 `scan-repo` verb.
+- **`templates/gitlab-ci/ciguard.gitlab-ci.yml`** — GitLab CI job snippet. Drop into `.gitlab-ci.yml` or pull via `include:` from a remote URL. `CIGUARD_OFFLINE=1` CI variable for air-gapped runners.
+- **`templates/jenkins/Jenkinsfile.ciguard`** — Jenkins declarative pipeline stage running ciguard via the official multi-arch GHCR image. No Python toolchain needed on the agent.
+- **README "Drop-in CI templates" section** — table linking all five templates with the right "use case" framing.
+- **`tests/test_templates.py` (22 tests)** — guards templates against drift. YAML validity, GitHub Actions SHA-pinning (dogfoods our own GHA-IAM-006 rule), pinned-version sync with `pyproject.toml`, ciguard-flag round-trip via subprocess against the real CLI.
+
+### Why templates first (and not the GitHub App)
+
+Slice 9 has two halves: reusable templates and the GitHub App. Templates are zero-attack-surface — just YAML users copy into their own repos — and they directly answer the "removing the upload friction" question raised in the original PRD. Shipping them now gets adoption signal flowing while the App is built secure-by-default in v0.10.0 (threat model, OAuth + webhook signature handling, mini self-pentest sub-cycle before public install link goes live).
+
+### Notes for users upgrading templates
+
+All templates pin `ciguard==0.9.4` (or the GHCR image at `v0.9.4`). When you upgrade your installation, bump the pin in your copy of the template too — the version pin is intentional, not a lazy default.
+
 ## [0.9.3] — 2026-04-28
 
 **Supply-chain attestation — closes issue #14.** From this release onwards every container image is **Sigstore-signed (keyless)** and carries **CycloneDX + SPDX SBOM attestations**; every PyPI distribution carries **PEP 740 attestations**. No long-lived signing keys; no separate key-management surface.

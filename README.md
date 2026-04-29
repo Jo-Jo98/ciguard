@@ -201,6 +201,20 @@ Drop a `.ciguardignore` YAML file at your repo root to suppress findings that yo
 
 Suppressed findings still appear in HTML / PDF / JSON / SARIF reports under a dedicated **Suppressed** section so the audit trail is preserved — they just don't contribute to the risk score or trigger CI failure. Override discovery with `--ignore-file <path>`; disable entirely with `--no-ignore-file`.
 
+## Drop-in CI templates
+
+Pre-built workflow files for the three supported platforms live under [`templates/`](templates/). Copy the one that matches your CI and bump the pinned ciguard version when you want to upgrade.
+
+| Platform | Template | Use case |
+|---|---|---|
+| GitHub Actions | [`templates/github-actions/ciguard-scan.yml`](templates/github-actions/ciguard-scan.yml) | Minimal — scan + JSON artifact, informational |
+| GitHub Actions | [`templates/github-actions/ciguard-scan-baseline.yml`](templates/github-actions/ciguard-scan-baseline.yml) | Full v0.5 baseline workflow — diff against `.ciguard/baseline.json`, fail on new High+, SARIF upload to Code Scanning |
+| GitHub Actions | [`templates/github-actions/ciguard-scan-repo.yml`](templates/github-actions/ciguard-scan-repo.yml) | Monorepo — auto-discover every pipeline file under the repo root |
+| GitLab CI | [`templates/gitlab-ci/ciguard.gitlab-ci.yml`](templates/gitlab-ci/ciguard.gitlab-ci.yml) | Job snippet — drop into your `.gitlab-ci.yml` or `include:` from a remote |
+| Jenkins | [`templates/jenkins/Jenkinsfile.ciguard`](templates/jenkins/Jenkinsfile.ciguard) | Declarative stage running ciguard via the official Docker image |
+
+All templates pin ciguard to a specific version (currently `0.9.4`) — never `:latest`. Bump the pin when you want to upgrade; release notes live at [github.com/Jo-Jo98/ciguard/releases](https://github.com/Jo-Jo98/ciguard/releases).
+
 ## Pre-commit hook
 
 Install ciguard into your `pre-commit` chain to scan pipeline files on every commit:

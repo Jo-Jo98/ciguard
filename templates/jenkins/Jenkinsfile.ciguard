@@ -1,0 +1,46 @@
+// ciguard — Jenkins declarative pipeline integration
+//
+// Drop this stage into your Jenkinsfile, or copy this file into your
+// repo as `Jenkinsfile.ciguard` and load it as a child pipeline.
+//
+// The stage runs ciguard inside its official multi-arch container
+// (ghcr.io/jo-jo98/ciguard) so the Jenkins agent only needs Docker —
+// no Python toolchain required.
+//
+// Bump the image tag below when you want to upgrade (always pin a
+// version, never use :latest in a security scanner).
+
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        ansiColor('xterm')
+    }
+
+    stages {
+        stage('ciguard') {
+            steps {
+                script {
+                    sh '''
+                        docker run --rm \
+                            -v "$WORKSPACE":/repo \
+                            -w /repo \
+                            ghcr.io/jo-jo98/ciguard:v0.9.4 \
+                            scan-repo /repo \
+                                --output /repo/ciguard-results.json \
+                                --fail-on High \
+                                --offline
+                    '''
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'ciguard-results.json',
+                                     allowEmptyArchive: true,
+                                     fingerprint: true
+                }
+            }
+        }
+    }
+}

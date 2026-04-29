@@ -1,0 +1,44 @@
+# ciguard — GitLab CI integration
+#
+# Add this job to your .gitlab-ci.yml, OR use it as a reusable include:
+#
+#   include:
+#     - remote: 'https://raw.githubusercontent.com/Jo-Jo98/ciguard/v0.9.4/templates/gitlab-ci/ciguard.gitlab-ci.yml'
+#
+# The job runs ciguard against every recognised pipeline file in the
+# repo, exposes the JSON report as a job artifact, and can be wired
+# into the pipeline as a gate stage by changing `allow_failure: true`.
+#
+# Bump the version pin (`ciguard==0.9.4`) when you want to upgrade.
+
+stages:
+  - test
+
+ciguard:
+  stage: test
+  image: python:3.12-slim
+  variables:
+    # Air-gapped runners can flip this to "1" via CI/CD variables to
+    # bypass network SCA lookups.
+    CIGUARD_OFFLINE: "0"
+  before_script:
+    - pip install --quiet ciguard==0.9.4
+  script:
+    - |
+      OFFLINE_FLAG=""
+      if [ "$CIGUARD_OFFLINE" = "1" ]; then OFFLINE_FLAG="--offline"; fi
+      ciguard scan-repo . \
+        --output ciguard-results.json \
+        --fail-on High \
+        $OFFLINE_FLAG
+  artifacts:
+    when: always
+    paths:
+      - ciguard-results.json
+    expire_in: 30 days
+  # Flip to `false` once the team is ready to gate the pipeline on
+  # ciguard's exit code (default is informational).
+  allow_failure: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

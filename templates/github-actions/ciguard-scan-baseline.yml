@@ -1,0 +1,88 @@
+# ciguard — full baseline workflow with SARIF upload to Code Scanning
+#
+# Drop this file at .github/workflows/ciguard.yml in your repo. It will:
+#
+#   1. Run `ciguard scan-repo` against the repo on every push + PR.
+#   2. Diff findings against `.ciguard/baseline.json` (commit it once with
+#      your accepted-state set; git-track it).
+#   3. Fail the build only on NEW findings at High or above (existing
+#      findings are tracked but don't block).
+#   4. Upload SARIF to GitHub Code Scanning so findings appear on the
+#      Security tab and on PR diffs.
+#
+# To bootstrap your baseline:
+#   pip install ciguard==0.9.4
+#   ciguard scan-repo . --output .ciguard/baseline-snapshot.json
+#   ciguard scan --input .gitlab-ci.yml --baseline .ciguard/baseline.json --update-baseline
+#   git add .ciguard/baseline.json && git commit -m "chore: ciguard baseline"
+#
+# Bump the pinned version below when you want to upgrade — see
+# https://github.com/Jo-Jo98/ciguard/releases for changelogs.
+
+name: ciguard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write  # required for SARIF upload to Code Scanning
+
+jobs:
+  ciguard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ciguard (pinned)
+        run: pip install --upgrade pip && pip install ciguard==0.9.4
+
+      - name: Scan repository against baseline
+        # `--fail-on High` exits non-zero on any High+ finding — combined
+        # with the committed baseline, only NEW High+ findings break CI.
+        # `--offline` skips network SCA lookups; remove if you want
+        # endoflife.date + OSV.dev enrichment in CI.
+        run: |
+          mkdir -p sarif
+          ciguard scan-repo . \
+            --output ciguard-results.json \
+            --fail-on High \
+            --offline
+
+      - name: Emit SARIF for Code Scanning
+        if: always()
+        run: |
+          mkdir -p sarif
+          combined=""
+          for f in $(find . -type f \( -name '.gitlab-ci.yml' -o -path '*/.github/workflows/*.yml' -o -name 'Jenkinsfile' \)); do
+            tmp=$(mktemp).sarif
+            ciguard scan --input "$f" --format sarif --output "$tmp" --offline || true
+            if [ -z "$combined" ]; then
+              combined=sarif/ciguard.sarif
+              cp "$tmp" "$combined"
+            else
+              jq --slurpfile extra <(jq '.runs[0].results' "$tmp") \
+                '.runs[0].results += $extra[0]' "$combined" > sarif/_merged.sarif
+              mv sarif/_merged.sarif "$combined"
+            fi
+          done
+
+      - uses: github/codeql-action/upload-sarif@b2f9ef845756500b97acbdaf5c1dd4e9c1d15734  # v3.35.2
+        if: always()
+        with:
+          sarif_file: sarif/ciguard.sarif
+          category: ciguard
+
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        if: always()
+        with:
+          name: ciguard-results
+          path: ciguard-results.json

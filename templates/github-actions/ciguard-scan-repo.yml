@@ -1,0 +1,49 @@
+# ciguard — monorepo scan workflow
+#
+# For repos containing multiple CI configs (e.g. a polyrepo migration in
+# progress, or a monorepo with per-service .gitlab-ci.yml + Jenkinsfile +
+# .github/workflows/*). Uses `ciguard scan-repo` which auto-discovers
+# every recognised pipeline file under the given root and emits one
+# aggregate report.
+#
+# `--fail-on Medium` is the recommended default for monorepos — High
+# alone tends to under-fire when the per-service blast radius is small;
+# Medium catches the kinds of misconfigs that compound across services.
+
+name: ciguard (monorepo)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ciguard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ciguard (pinned)
+        run: pip install --upgrade pip && pip install ciguard==0.9.4
+
+      - name: Auto-discover and scan every pipeline file
+        run: |
+          ciguard scan-repo . \
+            --output ciguard-results.json \
+            --fail-on Medium \
+            --offline
+
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        if: always()
+        with:
+          name: ciguard-results
+          path: ciguard-results.json
