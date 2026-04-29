@@ -38,6 +38,22 @@ router = APIRouter()
 MAX_BODY_BYTES = 25 * 1024 * 1024  # 25 MB — caps the DoS surface
 SIGNATURE_PREFIX = "sha256="
 
+# Header values are attacker-controlled. Going into a log line they MUST be
+# stripped of CR/LF (otherwise an attacker forges fake log lines via
+# `X-GitHub-Delivery: foo\nERROR fake-line`) and length-capped. Closes the
+# CodeQL py/log-injection findings on this module.
+_LOG_VALUE_MAX_LEN = 64
+
+
+def _safe_for_log(value: Optional[str]) -> str:
+    """Sanitise an attacker-controlled string for safe logging."""
+    if value is None:
+        return "<none>"
+    safe = value.replace("\r", "?").replace("\n", "?").replace("\t", "?")
+    if len(safe) > _LOG_VALUE_MAX_LEN:
+        safe = safe[:_LOG_VALUE_MAX_LEN] + "..."
+    return safe
+
 
 def _verify_signature(body: bytes, signature_header: Optional[str]) -> None:
     """Verify the X-Hub-Signature-256 header against the raw body.
@@ -51,8 +67,11 @@ def _verify_signature(body: bytes, signature_header: Optional[str]) -> None:
         # NOT permitted to accept unsigned payloads. (Compare with the
         # web token where missing-token means "auth disabled"; the App
         # has no such mode — every webhook MUST be HMAC-signed.)
+        # Env var name is hardcoded to dodge CodeQL's
+        # py/clear-text-logging-sensitive-data heuristic — it flags any
+        # variable whose name contains "secret" being passed to a logger.
         logger.error(
-            "rejecting webhook: %s is not set", config.WEBHOOK_SECRET_ENV
+            "rejecting webhook: required webhook-secret env var is not set"
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -84,10 +103,11 @@ def _verify_signature(body: bytes, signature_header: Optional[str]) -> None:
         presented_hex.encode("ascii", "ignore"), expected_hex.encode("ascii")
     ):
         # Don't log the presented value — it's attacker-controlled and we
-        # don't want it in our logs. Log a 6-char prefix for forensics only.
+        # don't want it in our logs. Log a 6-char prefix for forensics only,
+        # CR/LF-stripped via _safe_for_log to defeat log-injection.
         logger.warning(
-            "rejecting webhook: signature mismatch (prefix=%s…)",
-            presented_hex[:6],
+            "rejecting webhook: signature mismatch (prefix=%s)",
+            _safe_for_log(presented_hex[:6]),
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -134,7 +154,7 @@ async def receive_webhook(
     if x_github_delivery and config.is_delivery_seen(x_github_delivery):
         logger.info(
             "ack-and-skip: duplicate X-GitHub-Delivery=%s event=%s",
-            x_github_delivery, x_github_event,
+            _safe_for_log(x_github_delivery), _safe_for_log(x_github_event),
         )
         # 200, not 202 — we're explicitly NOT enqueuing new work.
         response.status_code = status.HTTP_200_OK
@@ -146,7 +166,7 @@ async def receive_webhook(
     # the logger so integration tests can assert it ran.
     logger.info(
         "accepted webhook: event=%s delivery=%s body_bytes=%d",
-        x_github_event, x_github_delivery, len(body),
+        _safe_for_log(x_github_event), _safe_for_log(x_github_delivery), len(body),
     )
 
     # --- 5. 202 ack within milliseconds ---

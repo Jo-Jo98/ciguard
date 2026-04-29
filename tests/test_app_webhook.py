@@ -240,6 +240,39 @@ def test_oversized_body_returns_413(client: TestClient) -> None:
 # ---- Logger hygiene — defence-in-depth on token / secret leakage ------------
 
 
+def test_log_injection_via_header_crlf_is_defeated(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Attacker-controlled header values must be CR/LF-stripped before
+    they hit the logger, otherwise a forged delivery ID like
+    `aaa\\nERROR fake-line` ends up as a separate-looking log entry."""
+    config.reset_delivery_cache_for_tests()
+    body = b'{"a":1}'
+    sneaky_delivery = "aaa\r\nERROR fake-injected-line"
+
+    with caplog.at_level(logging.INFO, logger="ciguard.app.webhook"):
+        client.post(
+            "/webhook",
+            content=body,
+            headers={
+                "X-Hub-Signature-256": _sign(body),
+                "X-GitHub-Delivery": sneaky_delivery,
+                "X-GitHub-Event": "push",
+            },
+        )
+
+    # Each individual log message must contain no real CR/LF — the
+    # sanitiser replaces them with `?`. That alone defeats the attack
+    # (an attacker can no longer make their content appear on a fresh
+    # line that downstream log parsers would treat as a separate entry).
+    for record in caplog.records:
+        assert "\r" not in record.message
+        assert "\n" not in record.message
+    # The sanitised replacement landed.
+    text = " | ".join(r.message for r in caplog.records)
+    assert "aaa??ERROR" in text
+
+
 def test_logger_never_emits_secret_or_supplied_signature(
     client: TestClient, caplog: pytest.LogCaptureFixture
 ) -> None:
