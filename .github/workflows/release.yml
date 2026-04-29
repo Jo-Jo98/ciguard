@@ -238,6 +238,14 @@ jobs:
     # the public Release page — users following the README's `cosign verify`
     # recipe land here expecting signatures + SBOMs to already exist.
     needs: [pypi, ghcr, attest, trivy]
+    # Sits behind a deployment-protection environment per ciguard's own
+    # GHA-DEP-001 rule (the dogfood lane caught the missing block on first
+    # push). The `pypi` env upstream already gates the release on its
+    # 2-min wait_timer; this env is created with empty protection rules
+    # so it adds no latency, but it's the place to wire required_reviewers
+    # or a longer wait_timer later if release-page publishing becomes
+    # something we want to slow down.
+    environment: github-release
     permissions:
       contents: write  # required for `gh release create`
     steps:
