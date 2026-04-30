@@ -4,12 +4,18 @@
 [![PyPI](https://img.shields.io/pypi/v/ciguard.svg)](https://pypi.org/project/ciguard/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-Static security auditor for CI/CD pipelines. Scans pipeline configuration files for misconfigurations, supply-chain risks, and compliance gaps. Produces prioritised reports with mappings to ISO 27001, SOC 2, and NIST CSF.
+**Visualise + audit CI/CD pipeline security — auditor-grade reports from your terminal.**
+Read-only · self-hosted · never phones home.
 
-**Supported today:** GitLab CI (`.gitlab-ci.yml`) and GitHub Actions (`.github/workflows/*.yml`)
-**In development:** Jenkins (Declarative Pipeline), SARIF output
+ciguard ingests your pipeline configuration (GitHub Actions, GitLab CI, Jenkins) and produces an interactive HTML map showing every job, every dependency, and every security gate — plus a rule-driven finding set anchored to SLSA / NIST SSDF / OWASP CICD-SEC / CIS / PCI DSS standards. Single-file deliverable, suitable for a contractor handing audit results to a client or an internal security team running quarterly posture reviews.
+
+**Supported parsers:** GitLab CI, GitHub Actions, Jenkins (Declarative + node-Scripted + shared library)
+**Output formats:** interactive HTML map *(in development, Slice 14a)*, SARIF 2.1.0, PDF, JSON, HTML
+**Integrations:** drop-in CI templates (GitHub Actions / GitLab CI / Jenkins), Model Context Protocol server for AI clients, GitHub App for live PR feedback
 
 > **New to ciguard?** [USAGE.md](USAGE.md) is a practical walkthrough — who benefits, five-minute integrations for GitLab CI / GitHub Actions / Docker, organisational policy patterns, and what the audit-grade reports actually contain.
+
+> **Note on the framing:** ciguard's product framing was repositioned 2026-04-30 from "static security auditor" (a scanner that publishes findings) to "self-hosted audit visualiser" (auditor-grade visual deliverables). The 44-rule scanner is now the *engine* under the visualiser; the visualiser deliverable lands in the v0.11.x slice. The product before that point still works as a scanner — and the engine, parsers, rules, baseline-delta, SCA enrichment, MCP server, and GitHub App framework all carry forward. Everything below this banner describes the engine's current capabilities; the visualiser-as-product framing is what's coming next.
 
 ## Why
 
