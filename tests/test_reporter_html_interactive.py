@@ -389,6 +389,88 @@ def test_legend_present_with_pin_vocabulary() -> None:
 
 
 # ===========================================================================
+# Phase 1.3 — click-to-job-detail panel + YAML + remediation + search
+# ===========================================================================
+
+
+def test_per_job_yaml_excerpt_renders() -> None:
+    """Each job carries a re-serialised YAML excerpt for the detail panel."""
+    jobs = [
+        Job(
+            name="build",
+            stage="build",
+            image="python:3.11",
+            script=["pip install .", "pytest"],
+        ),
+    ]
+    out = html_interactive.render(_basic_report(jobs=jobs))
+    data = _extract_json(out)
+    yaml_text = data["jobs"][0]["yaml"]
+    assert "name: build" in yaml_text
+    assert "image: python:3.11" in yaml_text
+    assert "stage: build" in yaml_text
+    assert "pip install" in yaml_text
+
+
+def test_yaml_excerpt_strips_default_empty_fields() -> None:
+    """No `dependencies: []` / `tags: []` walls — the excerpt stays
+    focused on what's actually configured."""
+    out = html_interactive.render(_basic_report(jobs=[Job(name="build")]))
+    data = _extract_json(out)
+    yaml_text = data["jobs"][0]["yaml"]
+    # Empty defaults from the model shouldn't appear
+    assert "dependencies: []" not in yaml_text
+    assert "tags: []" not in yaml_text
+    assert "variables: {}" not in yaml_text
+
+
+def test_job_detail_panel_scaffolding_present() -> None:
+    """The HTML wrapper ships both panels — global findings + job detail.
+    JS toggles between them on click."""
+    out = html_interactive.render(_basic_report(jobs=[Job(name="build")]))
+    assert 'id="findings-view"' in out
+    assert 'id="job-detail"' in out
+    assert 'id="back-to-findings"' in out
+    assert 'id="yaml-block"' in out
+    assert 'id="gates-summary"' in out
+    assert 'id="findings-on-job"' in out
+
+
+def test_findings_search_input_present() -> None:
+    """Phase 1.3 filter polish: text-search input above severity filter."""
+    out = html_interactive.render(_basic_report(jobs=[Job(name="build")]))
+    assert 'id="findings-search"' in out
+    assert 'placeholder="Search rule id, message, location' in out
+
+
+def test_job_with_environment_serialises_full_block() -> None:
+    """The Environment sub-model should round-trip through the YAML
+    so an auditor sees the whole environment block in the detail panel."""
+    from ciguard.models.pipeline import Environment
+    jobs = [
+        Job(
+            name="deploy",
+            environment=Environment(name="prod", deployment_tier="production"),
+        ),
+    ]
+    out = html_interactive.render(_basic_report(jobs=jobs))
+    data = _extract_json(out)
+    yaml_text = data["jobs"][0]["yaml"]
+    assert "environment:" in yaml_text
+    assert "name: prod" in yaml_text
+    assert "production" in yaml_text
+
+
+def test_render_job_yaml_handles_minimal_job() -> None:
+    """A job with only a name shouldn't emit walls of empty defaults."""
+    yaml_text = html_interactive._render_job_yaml(Job(name="bare-job"))
+    assert "name: bare-job" in yaml_text
+    # No dump of empty lists / dicts / None values
+    assert "[]" not in yaml_text
+    assert "{}" not in yaml_text or yaml_text.count("\n") <= 2
+
+
+# ===========================================================================
 # write_report file-system entry point
 # ===========================================================================
 

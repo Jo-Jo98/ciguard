@@ -38,7 +38,43 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any, Dict, List
 
+import yaml
+
 from ciguard.models.pipeline import Finding, Job, Report, Severity
+
+
+def _render_job_yaml(job: Job) -> str:
+    """Re-serialise a parsed Job to YAML for the click-to-detail panel.
+
+    This is intentionally lossy — comments and the original key ordering
+    are gone — but it produces a clean readable representation of the
+    JOB SHAPE that an auditor can refer to. A future iteration could
+    capture the raw YAML span at parse time for byte-exact display, but
+    that's a parser change; this works against any v0.x Report.
+
+    Default / empty fields are stripped so the output stays focused on
+    what's actually configured (no walls of `dependencies: []`).
+    """
+    raw = job.model_dump(by_alias=True, exclude_none=True, exclude_defaults=True)
+    # Pydantic round-trips unknown / Any fields including the empty
+    # collections we explicitly set on the model. Drop them post-dump
+    # too in case `exclude_defaults` missed them.
+    cleaned: Dict[str, Any] = {}
+    for k, v in raw.items():
+        if v in ("", [], {}, None):
+            continue
+        cleaned[k] = v
+    if not cleaned:
+        return f"{job.name}: {{}}\n"
+    # Stable, predictable ordering: name first, then config keys alphabetically.
+    ordered: Dict[str, Any] = {"name": job.name}
+    for k in sorted(cleaned):
+        if k == "name":
+            continue
+        ordered[k] = cleaned[k]
+    return yaml.safe_dump(
+        ordered, sort_keys=False, default_flow_style=False, width=72,
+    )
 
 
 # ---- Severity → colour palette (post-pivot visual language) ---------------
@@ -218,6 +254,10 @@ def _to_visual_data(report: Report) -> Dict[str, Any]:
             "findings": finding_payloads,
             "findings_by_severity": dict(sev_counts),
             "highest_severity": _highest_severity(job_findings),
+            # YAML excerpt for the click-to-detail panel (Phase 1.3).
+            # Re-serialised from the parsed model — clean shape, no
+            # comments or original ordering preserved.
+            "yaml": _render_job_yaml(job),
         })
 
     # Resolve dep names to ids; drop deps that don't match a known job.
@@ -578,6 +618,145 @@ main { display: flex; height: calc(100% - 65px); }
 
 /* dimmed nodes when filtering */
 .node.dim { opacity: 0.25; }
+
+/* ---- Search input ---- */
+.panel-search {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.panel-search input {
+  width: 100%;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--fg);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+}
+.panel-search input:focus { border-color: var(--accent); }
+.panel-search input::placeholder { color: var(--fg-dim); }
+
+/* ---- Job-detail panel (click a node to enter) ---- */
+#job-detail { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+#job-detail.active { display: flex; }
+#findings-view.hidden { display: none; }
+
+.detail-header {
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.detail-header .back-btn {
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: 8px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.detail-header .back-btn:hover { color: var(--fg); }
+.detail-header h2 {
+  margin: 0; font-size: 14px; font-weight: 600;
+  font-family: "SF Mono", "Menlo", "Consolas", ui-monospace, monospace;
+}
+.detail-header .detail-sub { color: var(--fg-dim); font-size: 11px; margin-top: 4px; }
+
+.gates-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.gate-row { display: flex; flex-direction: column; gap: 2px; }
+.gate-row .label { color: var(--fg-dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+.gate-row .value { color: var(--fg); font-size: 12px; }
+.gate-row .value.danger  { color: var(--crit); }
+.gate-row .value.warn    { color: var(--med); }
+.gate-row .value.success { color: var(--low); }
+.gate-row .value.muted   { color: var(--fg-dim); }
+.gate-row .value code {
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 11.5px;
+}
+
+.detail-scroll { overflow: auto; flex: 1; }
+
+.yaml-section {
+  border-bottom: 1px solid var(--border);
+  padding: 12px 16px;
+}
+.yaml-section .section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
+  margin-bottom: 6px;
+}
+.yaml-block {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-family: "SF Mono", "Menlo", "Consolas", ui-monospace, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--fg);
+}
+
+.findings-on-job { padding: 0 0 12px; }
+.finding-detail {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.finding-detail .row1 { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.finding-detail .sev-pill {
+  font-size: 10px; font-weight: 700;
+  padding: 2px 7px; border-radius: 3px;
+  letter-spacing: 0.04em; color: #0a0a0a;
+}
+.finding-detail .sev-pill.Critical { background: var(--crit); }
+.finding-detail .sev-pill.High     { background: var(--high); }
+.finding-detail .sev-pill.Medium   { background: var(--med); }
+.finding-detail .sev-pill.Low      { background: var(--low); }
+.finding-detail .sev-pill.Info     { background: var(--info); }
+.finding-detail .rule-id {
+  color: var(--fg-dim); font-size: 11px;
+  font-family: "SF Mono", ui-monospace, monospace;
+}
+.finding-detail .message { font-weight: 500; color: var(--fg); margin-bottom: 6px; }
+.finding-detail .evidence-block {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 9px;
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--fg-muted);
+  margin: 6px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.finding-detail .remediation-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--low);
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+.finding-detail .remediation {
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
 """
 
 _VIEWER_JS = r"""
@@ -789,67 +968,171 @@ _VIEWER_JS = r"""
     .on('mouseleave', () => tooltip.style('opacity', 0))
     .on('click', (event, d) => selectJob(d.id));
 
-  // ---- Side-panel: findings list with filtering ----
-  const panel = d3.select('#findings-list');
+  // ---- Side-panel state machine ----
+  // Two views: "findings" (default — global list with filters + search)
+  // and "detail" (when a job is clicked — shows YAML + per-finding remediation).
+  const findingsView = document.getElementById('findings-view');
+  const detailView = document.getElementById('job-detail');
+  const findingsList = d3.select('#findings-list');
   let activeSeverity = 'all';
   let activeJob = null;
+  let searchQuery = '';
+
+  function setView(view) {
+    if (view === 'detail') {
+      findingsView.classList.add('hidden');
+      detailView.classList.add('active');
+    } else {
+      findingsView.classList.remove('hidden');
+      detailView.classList.remove('active');
+    }
+  }
+
+  function matchSearch(f, q) {
+    if (!q) return true;
+    const hay = `${f.rule_id} ${f.message} ${f.location}`.toLowerCase();
+    return hay.includes(q.toLowerCase());
+  }
 
   function renderFindings() {
-    panel.html('');
+    findingsList.html('');
     const items = data.findings.filter(f => {
       if (activeSeverity !== 'all' && f.severity !== activeSeverity) return false;
-      if (activeJob) {
-        // Show only findings whose location is the selected job (bare or `<job>:line`)
-        const job = data.jobs.find(j => j.id === activeJob);
-        if (!job) return false;
-        return f.location === job.name || f.location.startsWith(job.name + ':');
-      }
+      if (!matchSearch(f, searchQuery)) return false;
       return true;
     });
     if (!items.length) {
-      panel.append('div').attr('class', 'findings-empty').text('No findings match the current filter.');
+      findingsList.append('div').attr('class', 'findings-empty')
+        .text(searchQuery
+          ? `No findings match "${searchQuery}".`
+          : 'No findings match the current filter.');
+      d3.select('#findings-count').text(`0 of ${data.findings.length}`);
       return;
     }
     items.forEach(f => {
-      const it = panel.append('div').attr('class', 'finding-item').attr('data-fp', f.fingerprint);
+      const it = findingsList.append('div').attr('class', 'finding-item').attr('data-fp', f.fingerprint);
       const r1 = it.append('div').attr('class', 'row1');
       r1.append('span').attr('class', `sev-pill ${f.severity}`).text(f.severity);
       r1.append('span').attr('class', 'rule-id').text(f.rule_id);
       it.append('div').attr('class', 'message').text(f.message);
       it.append('div').attr('class', 'location').text(f.location);
       it.on('click', () => {
-        // Navigate map: highlight the affected job (if any)
         const target = data.jobs.find(j => f.location === j.name || f.location.startsWith(j.name + ':'));
         if (target) selectJob(target.id);
         d3.selectAll('.finding-item').classed('selected', false);
         it.classed('selected', true);
       });
     });
-    // Update sub-header count
     d3.select('#findings-count').text(`${items.length} of ${data.findings.length}`);
   }
 
-  function selectJob(id) {
-    activeJob = (activeJob === id) ? null : id;
-    d3.selectAll('.node').classed('selected', d => d.id === activeJob);
-    if (activeJob) {
-      // Dim non-related nodes + edges, highlight selected and direct neighbours
-      const neighbours = new Set([activeJob]);
-      data.edges.forEach(e => {
-        if (e.from === activeJob) neighbours.add(e.to);
-        if (e.to === activeJob) neighbours.add(e.from);
-      });
-      d3.selectAll('.node').classed('dim', d => !neighbours.has(d.id));
-      d3.selectAll('.edge').classed('dim', e => !(neighbours.has(e.from) && neighbours.has(e.to)))
-        .classed('highlight', e => e.from === activeJob || e.to === activeJob);
-    } else {
-      d3.selectAll('.node').classed('dim', false);
-      d3.selectAll('.edge').classed('dim', false).classed('highlight', false);
+  function renderJobDetail(jobId) {
+    const job = data.jobs.find(j => j.id === jobId);
+    if (!job) return;
+
+    document.getElementById('detail-job-name').textContent = job.name;
+    const subParts = [];
+    if (job.stage && job.stage !== '—') subParts.push(`stage: ${job.stage}`);
+    if (job.environment) subParts.push(`env: ${job.environment}`);
+    document.getElementById('detail-job-sub').textContent = subParts.join(' · ') || ' ';
+
+    // Gates summary grid
+    const gates = document.getElementById('gates-summary');
+    gates.innerHTML = '';
+    function addGate(label, value, klass) {
+      const row = document.createElement('div');
+      row.className = 'gate-row';
+      const lab = document.createElement('div');
+      lab.className = 'label';
+      lab.textContent = label;
+      const val = document.createElement('div');
+      val.className = `value ${klass || ''}`;
+      val.innerHTML = value;
+      row.append(lab, val);
+      gates.append(row);
     }
-    renderFindings();
+    if (job.image) {
+      const pinClass = job.pin_status === 'mutable' ? 'danger'
+        : job.pin_status === 'tag' ? 'warn'
+        : job.pin_status === 'digest' ? 'success'
+        : 'muted';
+      const pinLabel = job.pin_status === 'mutable' ? '⚠ MUTABLE'
+        : job.pin_status === 'tag' ? 'TAG'
+        : job.pin_status === 'digest' ? '✓ DIGEST'
+        : '—';
+      addGate('Image', `<code>${escapeHtml(job.image)}</code> · ${pinLabel}`, pinClass);
+    } else {
+      addGate('Image', '—', 'muted');
+    }
+    addGate('Production target', job.targets_production ? '⚠ deploys to prod' : 'no', job.targets_production ? 'danger' : 'muted');
+    addGate('Approval gate', job.has_manual_gate ? '✓ manual gate set' : 'no manual gate', job.has_manual_gate ? 'success' : 'muted');
+    addGate('Highest finding', job.highest_severity || 'clean', job.highest_severity ? 'danger' : 'success');
+
+    // YAML block
+    document.getElementById('yaml-block').textContent = job.yaml || `${job.name}: {}`;
+
+    // Per-finding cards with remediation expanded
+    const findingsBox = document.getElementById('findings-on-job');
+    findingsBox.innerHTML = '';
+    if (!job.findings.length) {
+      const empty = document.createElement('div');
+      empty.className = 'findings-empty';
+      empty.textContent = 'No findings raised against this job.';
+      findingsBox.append(empty);
+    } else {
+      // Side-panel data carries remediation; per-job findings only carry
+      // the slim shape. Cross-look up by fingerprint for the full record.
+      const fullByFp = new Map(data.findings.map(f => [f.fingerprint, f]));
+      job.findings.forEach(jf => {
+        const full = fullByFp.get(jf.fingerprint) || jf;
+        const card = document.createElement('div');
+        card.className = 'finding-detail';
+        card.innerHTML = `
+          <div class="row1">
+            <span class="sev-pill ${full.severity}">${full.severity}</span>
+            <span class="rule-id">${escapeHtml(full.rule_id)}</span>
+          </div>
+          <div class="message">${escapeHtml(full.message)}</div>
+          <div class="evidence-block">${escapeHtml(full.evidence)}</div>
+          <div class="remediation-label">Remediation</div>
+          <div class="remediation">${escapeHtml(full.remediation || '(no remediation text recorded)')}</div>
+        `;
+        findingsBox.append(card);
+      });
+    }
   }
 
-  // Filter buttons
+  function selectJob(id) {
+    if (activeJob === id) {
+      // Toggle off — return to global findings view
+      deselectJob();
+      return;
+    }
+    activeJob = id;
+    d3.selectAll('.node').classed('selected', d => d.id === activeJob);
+    const neighbours = new Set([activeJob]);
+    data.edges.forEach(e => {
+      if (e.from === activeJob) neighbours.add(e.to);
+      if (e.to === activeJob) neighbours.add(e.from);
+    });
+    d3.selectAll('.node').classed('dim', d => !neighbours.has(d.id));
+    d3.selectAll('.edge').classed('dim', e => !(neighbours.has(e.from) && neighbours.has(e.to)))
+      .classed('highlight', e => e.from === activeJob || e.to === activeJob);
+    renderJobDetail(activeJob);
+    setView('detail');
+  }
+
+  function deselectJob() {
+    activeJob = null;
+    d3.selectAll('.node').classed('selected', false).classed('dim', false);
+    d3.selectAll('.edge').classed('dim', false).classed('highlight', false);
+    setView('findings');
+  }
+
+  // Back button
+  document.getElementById('back-to-findings').addEventListener('click', deselectJob);
+
+  // Severity filter buttons
   document.querySelectorAll('.filter-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
@@ -857,6 +1140,12 @@ _VIEWER_JS = r"""
       activeSeverity = btn.dataset.sev;
       renderFindings();
     });
+  });
+
+  // Text-search input
+  document.getElementById('findings-search').addEventListener('input', (e) => {
+    searchQuery = e.target.value.trim();
+    renderFindings();
   });
 
   function escapeHtml(s) {
@@ -926,19 +1215,39 @@ def render(report: Report) -> str:
   <main>
     <div id="graph-container"></div>
     <aside id="side-panel">
-      <div class="panel-header">
-        <h2>Findings</h2>
-        <div class="panel-sub"><span id="findings-count">{total_findings} of {total_findings}</span> · click to highlight job</div>
+      <div id="findings-view">
+        <div class="panel-header">
+          <h2>Findings</h2>
+          <div class="panel-sub"><span id="findings-count">{total_findings} of {total_findings}</span> · click a finding to highlight its job</div>
+        </div>
+        <div class="panel-search">
+          <input id="findings-search" type="search" placeholder="Search rule id, message, location…" autocomplete="off">
+        </div>
+        <div class="panel-filter">
+          <button class="filter-btn active" data-sev="all">All</button>
+          <button class="filter-btn" data-sev="Critical">Critical</button>
+          <button class="filter-btn" data-sev="High">High</button>
+          <button class="filter-btn" data-sev="Medium">Medium</button>
+          <button class="filter-btn" data-sev="Low">Low</button>
+          <button class="filter-btn" data-sev="Info">Info</button>
+        </div>
+        <div id="findings-list" class="findings-list"></div>
       </div>
-      <div class="panel-filter">
-        <button class="filter-btn active" data-sev="all">All</button>
-        <button class="filter-btn" data-sev="Critical">Critical</button>
-        <button class="filter-btn" data-sev="High">High</button>
-        <button class="filter-btn" data-sev="Medium">Medium</button>
-        <button class="filter-btn" data-sev="Low">Low</button>
-        <button class="filter-btn" data-sev="Info">Info</button>
+      <div id="job-detail">
+        <div class="detail-header">
+          <button class="back-btn" id="back-to-findings">← Back to all findings</button>
+          <h2 id="detail-job-name"></h2>
+          <div class="detail-sub" id="detail-job-sub"></div>
+        </div>
+        <div class="gates-summary" id="gates-summary"></div>
+        <div class="detail-scroll">
+          <div class="yaml-section">
+            <div class="section-label">Job configuration</div>
+            <pre class="yaml-block" id="yaml-block"></pre>
+          </div>
+          <div class="findings-on-job" id="findings-on-job"></div>
+        </div>
       </div>
-      <div id="findings-list" class="findings-list"></div>
     </aside>
   </main>
   <footer class="legend">
