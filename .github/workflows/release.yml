@@ -252,14 +252,19 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - name: Extract this version's section from CHANGELOG.md
-        id: notes
+        # Write to a file rather than a step output. Step outputs get
+        # template-substituted into bash commands `${{ ... }}`-style at
+        # YAML-template-expansion time, so any backticks / `<` / `>` /
+        # `$()` in the changelog body get interpreted as bash command
+        # substitution / redirects (as they did on the v0.10.0 release —
+        # the body was small enough on v0.9.4 to escape, but v0.10.0's
+        # narrative had backticks all over). A file passed via
+        # `gh release create --notes-file` doesn't pass through bash,
+        # so this is the safer pattern.
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          {
-            echo 'body<<EOF_NOTES'
-            python3 scripts/extract_changelog_section.py "$VERSION"
-            echo 'EOF_NOTES'
-          } >> "$GITHUB_OUTPUT"
+          python3 scripts/extract_changelog_section.py "$VERSION" \
+            > "$RUNNER_TEMP/release-notes.md"
 
       - name: Create GitHub Release
         env:
@@ -267,4 +272,4 @@ jobs:
         run: |
           gh release create "${GITHUB_REF_NAME}" \
             --title "${GITHUB_REF_NAME}" \
-            --notes "${{ steps.notes.outputs.body }}"
+            --notes-file "$RUNNER_TEMP/release-notes.md"
