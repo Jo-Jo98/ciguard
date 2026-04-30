@@ -191,10 +191,16 @@ def write_baseline(
         os.replace(tmp_path, path)
     except Exception:
         # On error, clean up the tmp file rather than leaving litter.
+        # Cleanup is best-effort: if it fails (e.g. the disk-full error
+        # that triggered the original Exception also blocks unlink),
+        # log + continue so we surface the ORIGINAL failure unmodified.
         try:
             os.unlink(tmp_path)
-        except OSError:
-            pass
+        except OSError as cleanup_exc:
+            logger.debug(
+                "tmp-file cleanup failed during write_baseline error path: %s",
+                cleanup_exc,
+            )
         raise
     logger.info(
         "wrote baseline (installation=%d repo=%s bytes=%d)",

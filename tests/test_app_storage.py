@@ -193,11 +193,15 @@ def test_installation_id_must_be_positive(storage_root: Path) -> None:
 
 def test_installation_id_must_be_keyword_only(storage_root: Path) -> None:
     """Positional invocation is not allowed — guards against argument-
-    order swaps that would mix up installation_id and repo_full_name."""
+    order swaps that would mix up installation_id and repo_full_name.
+
+    Indirect invocation through `*args` so CodeQL doesn't see a literal
+    positional-call signature mismatch (`py/call/wrong-arguments`) —
+    we WANT the runtime TypeError, that's the test's whole point."""
+    fn = storage.read_baseline
+    bad_args: tuple = (42, "owner/repo")
     with pytest.raises(TypeError):
-        storage.read_baseline(  # type: ignore[misc]
-            42, "owner/repo",
-        )
+        fn(*bad_args)
 
 
 # ===========================================================================
