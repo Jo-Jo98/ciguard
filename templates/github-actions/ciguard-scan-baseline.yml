@@ -11,7 +11,7 @@
 #      Security tab and on PR diffs.
 #
 # To bootstrap your baseline:
-#   pip install ciguard==0.9.4
+#   pip install ciguard==0.10.0
 #   ciguard scan-repo . --output .ciguard/baseline-snapshot.json
 #   ciguard scan --input .gitlab-ci.yml --baseline .ciguard/baseline.json --update-baseline
 #   git add .ciguard/baseline.json && git commit -m "chore: ciguard baseline"
@@ -43,7 +43,7 @@ jobs:
           cache: pip
 
       - name: Install ciguard (pinned)
-        run: pip install --upgrade pip && pip install ciguard==0.9.4
+        run: pip install --upgrade pip && pip install ciguard==0.10.0
 
       - name: Scan repository against baseline
         # `--fail-on High` exits non-zero on any High+ finding — combined

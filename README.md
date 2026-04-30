@@ -215,6 +215,69 @@ Pre-built workflow files for the three supported platforms live under [`template
 
 All templates pin ciguard to a specific version (currently `0.9.4`) — never `:latest`. Bump the pin when you want to upgrade; release notes live at [github.com/Jo-Jo98/ciguard/releases](https://github.com/Jo-Jo98/ciguard/releases).
 
+## Running the GitHub App (v0.10.0)
+
+ciguard ships with an optional GitHub App receiver that scans pull requests on every push and posts results back as a Check Run + PR comment. It runs as a small FastAPI service you self-host alongside your CI.
+
+> **v0.10.0 status:** the receiver, JWT broker, async scheduler, Check Run + PR comment, per-installation storage namespacing, and CLI launcher are all shipped. The actual scan-against-real-repo execution is stubbed in v0.10.0 (every Check Run posts a "ciguard receiver wired; scan execution lands in v0.10.1" notice). v0.10.1 will wire the real clone-and-scan path. The stub is honest: deploy v0.10.0 to verify your wiring works end-to-end without yet getting fake findings.
+
+### Install
+
+```sh
+pip install 'ciguard[app]'
+```
+
+The `[app]` extra adds `PyJWT[crypto]` (~30MB for the `cryptography` dependency). Base `pip install ciguard` stays lean for CI users.
+
+### Register the App
+
+A reviewable manifest lives at [`deploy/app/manifest.yml`](deploy/app/manifest.yml). The permission set is intentionally minimal — `Actions: read`, `Contents: read`, `Pull requests: write`, `Checks: write`, `Metadata: read`. Any future expansion goes through a manifest-diff review, never silently in app code.
+
+To create the App on GitHub:
+
+1. Visit `https://github.com/settings/apps/new` (or your org's Apps page)
+2. Use "Create from manifest" and paste the contents of `deploy/app/manifest.yml`
+3. After creation, GitHub gives you the App ID, a private key (`.pem`), and a webhook secret
+4. Set the webhook URL to your `ciguard app` deployment endpoint (e.g. `https://ciguard.example.com/webhook`)
+
+### Configure
+
+Set these environment variables on the host that runs `ciguard app`:
+
+| Var | Purpose |
+|---|---|
+| `CIGUARD_APP_ID` | Numeric App ID from GitHub |
+| `CIGUARD_APP_PRIVATE_KEY` | PEM bytes inline (production-recommended) |
+| `CIGUARD_APP_PRIVATE_KEY_PATH` | Or path to `.pem` on disk (dev-only) |
+| `CIGUARD_APP_WEBHOOK_SECRET` | Webhook secret (for HMAC verification) |
+| `CIGUARD_APP_STORAGE_ROOT` | Directory for per-installation baselines (default `./var/ciguard-app`) |
+
+The receiver fails-closed at startup if any of these are missing — there's no silent accept-without-verification path.
+
+### Run
+
+```sh
+# Loopback (default) — pair with a reverse proxy like nginx / Caddy
+ciguard app
+
+# Explicit bind + port
+ciguard app --host 0.0.0.0 --port 8000
+```
+
+Binding to a non-loopback address prints a warning suggesting reverse-proxy + TLS.
+
+### Security posture
+
+The full threat model is at [`Project ciguard/THREAT_MODEL.md`](https://github.com/Jo-Jo98/ciguard/blob/main/Project%20ciguard/THREAT_MODEL.md) Surface 9. v0.10.0 closes 11 of 13 STRIDE rows in code; the remaining 2 close architecturally (no OAuth callback in the manifest install flow, manifest scope is the minimal permission set). A self-pentest sub-cycle (CYCLE-1.5) runs the full Surface 9 scenarios against the deployed App in an ephemeral DigitalOcean lab before the install link is published more broadly.
+
+Notable in-code defences:
+
+- HMAC-SHA256 over raw body bytes; `hmac.compare_digest`; fail-closed (401) on missing/malformed/mismatched signature.
+- JWT signing isolated to `_mint_jwt()`; tokens logged prefix-only (`ghs_a3df…`); 401 from any GitHub call invalidates the cached token.
+- Async scheduler with bounded queue + worker pool; idempotency on `(installation_id, head_sha)`; per-`(installation_id, repo)` lock on baseline writes.
+- PR-comment markdown sanitisation (4-backtick fences with backtick-run neutralisation; markdown specials escaped on inline values).
+- Per-installation storage namespace (`<storage_root>/<installation_id>/<owner>/<repo>/baseline.json`). Reads keyed only by `repo_full_name` raise `TypeError`. Path traversal in repo names rejected at validation; resolved-path-under-root assert as belt-and-braces.
+
 ## Pre-commit hook
 
 Install ciguard into your `pre-commit` chain to scan pipeline files on every commit:

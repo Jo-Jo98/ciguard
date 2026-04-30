@@ -813,6 +813,26 @@ def main() -> int:
     # SSE / HTTP transports would add flags here.
     del mcp_parser  # silence unused; argparse keeps a reference internally
 
+    # ---- `app` subcommand (v0.10.0): launch the ciguard GitHub App
+    # webhook receiver. Reads config from env (CIGUARD_APP_ID,
+    # CIGUARD_APP_PRIVATE_KEY[_PATH], CIGUARD_APP_WEBHOOK_SECRET,
+    # CIGUARD_APP_STORAGE_ROOT). See README "Running the GitHub App".
+    app_parser = subparsers.add_parser(
+        "app",
+        help="Launch the ciguard GitHub App webhook receiver (FastAPI). "
+             "Receives webhooks, scans pipelines, posts Check Runs + "
+             "PR comments. Requires `pip install 'ciguard[app]'`.",
+    )
+    app_parser.add_argument(
+        "--host", default="127.0.0.1",
+        help="Bind address. Default 127.0.0.1 (loopback). Set to 0.0.0.0 "
+             "for public deployments — pair with a reverse proxy / TLS.",
+    )
+    app_parser.add_argument(
+        "--port", type=int, default=8000,
+        help="Bind port. Default 8000.",
+    )
+
     # ---- `baseline` subcommand: write a baseline from a fresh scan, no report.
     baseline_parser = subparsers.add_parser(
         "baseline",
@@ -895,6 +915,72 @@ def main() -> int:
             print(f"  {exc}", file=sys.stderr)
             return 1
         run_stdio()
+        return 0
+    elif args.command == "app":
+        # v0.10.0 — GitHub App webhook receiver. Spins up uvicorn against
+        # the FastAPI factory. Pre-flight check: required env vars must
+        # be set or we refuse to start (fail-closed, no silent
+        # accept-without-verification path).
+        try:
+            from ciguard.app import config as _app_config
+            from ciguard.app.factory import create_app as _create_app
+        except ImportError as exc:
+            print(
+                f"{_RED}Error:{_RESET} ciguard `app` extra is not installed. "
+                "Install with `pip install 'ciguard[app]'`.",
+                file=sys.stderr,
+            )
+            print(f"  {exc}", file=sys.stderr)
+            return 1
+
+        missing = []
+        if _app_config.webhook_secret() is None:
+            missing.append("CIGUARD_APP_WEBHOOK_SECRET")
+        # App ID + private key are required at JWT-mint time, not at
+        # receiver startup — but we surface them up front so misconfig
+        # is loud, not silent.
+        import os as _os
+        if not _os.environ.get("CIGUARD_APP_ID"):
+            missing.append("CIGUARD_APP_ID")
+        if (
+            not _os.environ.get("CIGUARD_APP_PRIVATE_KEY")
+            and not _os.environ.get("CIGUARD_APP_PRIVATE_KEY_PATH")
+        ):
+            missing.append("CIGUARD_APP_PRIVATE_KEY or CIGUARD_APP_PRIVATE_KEY_PATH")
+        if missing:
+            print(
+                f"{_RED}Error:{_RESET} required env vars not set:",
+                file=sys.stderr,
+            )
+            for m in missing:
+                print(f"  - {m}", file=sys.stderr)
+            print(
+                f"  {_DIM}See README 'Running the GitHub App' for setup.{_RESET}",
+                file=sys.stderr,
+            )
+            return 1
+
+        # Yellow warning when binding non-loopback (matches the `web`
+        # subcommand pattern from v0.9.1 deployment hardening).
+        if args.host not in ("127.0.0.1", "localhost", "::1"):
+            print(
+                f"{_DIM}Warning: binding to {args.host} (non-loopback). "
+                "Pair with a reverse proxy + TLS for production "
+                f"deployments.{_RESET}",
+                file=sys.stderr,
+            )
+
+        try:
+            import uvicorn
+        except ImportError:
+            print(
+                f"{_RED}Error:{_RESET} uvicorn not installed.",
+                file=sys.stderr,
+            )
+            return 1
+
+        app = _create_app()
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
         return 0
     else:
         parser.print_help()

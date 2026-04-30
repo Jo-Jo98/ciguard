@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 import sys
 from pathlib import Path
@@ -271,6 +272,188 @@ def test_log_injection_via_header_crlf_is_defeated(
     # The sanitised replacement landed.
     text = " | ".join(r.message for r in caplog.records)
     assert "aaa??ERROR" in text
+
+
+# ---- Dispatch — installation_id derived from VERIFIED payload --------------
+
+
+def _client_with_scheduler(monkeypatch):  # type: ignore[no-untyped-def]
+    """Build a client whose app has a stub scheduler on app.state."""
+    from unittest.mock import AsyncMock, MagicMock
+    from ciguard.app.scheduler import EnqueueOutcome
+
+    monkeypatch.setenv(config.WEBHOOK_SECRET_ENV, WEBHOOK_SECRET)
+    config.reset_delivery_cache_for_tests()
+
+    scheduler = MagicMock()
+    scheduler.enqueue = AsyncMock(
+        return_value=EnqueueOutcome(accepted=True, reason="enqueued")
+    )
+
+    app = FastAPI()
+    app.include_router(webhook.router)
+    app.state.scheduler = scheduler
+    return TestClient(app), scheduler
+
+
+def test_pull_request_event_dispatches_with_installation_from_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The headline IDOR-defence test at the API boundary. A
+    well-formed pull_request webhook payload carries an
+    `installation.id` — that's the one the dispatcher must use.
+    Caller-controlled headers / URL params MUST NOT influence it."""
+    client, scheduler = _client_with_scheduler(monkeypatch)
+    payload = {
+        "action": "opened",
+        "number": 42,
+        "installation": {"id": 88888},
+        "repository": {"full_name": "owner/repo"},
+        "pull_request": {
+            "number": 42,
+            "head": {"sha": "deadbeef" * 5},
+        },
+    }
+    body = json.dumps(payload).encode()
+    resp = client.post(
+        "/webhook",
+        content=body,
+        headers={
+            "X-Hub-Signature-256": _sign(body),
+            "X-GitHub-Event": "pull_request",
+            "X-GitHub-Delivery": "abc-1",
+            # Caller plants a DIFFERENT installation_id in a URL-style
+            # header — the dispatcher MUST ignore it.
+            "X-Caller-Installation-Id": "11111",
+        },
+    )
+    assert resp.status_code == 202
+    scheduler.enqueue.assert_awaited_once()
+    job = scheduler.enqueue.call_args.args[0]
+    assert job.installation_id == 88888  # from payload, not header
+    assert job.repo_full_name == "owner/repo"
+    assert job.head_sha == "deadbeef" * 5
+    assert job.pr_number == 42
+    assert job.event == "pull_request"
+
+
+def test_push_event_dispatches_with_after_sha(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, scheduler = _client_with_scheduler(monkeypatch)
+    payload = {
+        "ref": "refs/heads/main",
+        "after": "cafebabe" * 5,
+        "installation": {"id": 99999},
+        "repository": {"full_name": "owner/repo"},
+    }
+    body = json.dumps(payload).encode()
+    resp = client.post(
+        "/webhook",
+        content=body,
+        headers={
+            "X-Hub-Signature-256": _sign(body),
+            "X-GitHub-Event": "push",
+            "X-GitHub-Delivery": "push-1",
+        },
+    )
+    assert resp.status_code == 202
+    job = scheduler.enqueue.call_args.args[0]
+    assert job.installation_id == 99999
+    assert job.head_sha == "cafebabe" * 5
+    assert job.pr_number is None
+    assert job.event == "push"
+
+
+def test_payload_without_installation_does_not_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Events without an installation block (ping, some App-config
+    events) — acknowledge cleanly, don't enqueue."""
+    client, scheduler = _client_with_scheduler(monkeypatch)
+    body = json.dumps({"zen": "Approachable is better than simple."}).encode()
+    resp = client.post(
+        "/webhook",
+        content=body,
+        headers={
+            "X-Hub-Signature-256": _sign(body),
+            "X-GitHub-Event": "ping",
+            "X-GitHub-Delivery": "ping-1",
+        },
+    )
+    assert resp.status_code == 202
+    scheduler.enqueue.assert_not_called()
+
+
+def test_queue_full_surfaces_as_503(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bounded-queue backpressure — webhook handler returns 503 so
+    GitHub retries; design commitment from THREAT_MODEL Surface 9
+    'Webhook handler DoS' row."""
+    from unittest.mock import AsyncMock, MagicMock
+    from ciguard.app.scheduler import EnqueueOutcome
+
+    monkeypatch.setenv(config.WEBHOOK_SECRET_ENV, WEBHOOK_SECRET)
+    config.reset_delivery_cache_for_tests()
+
+    scheduler = MagicMock()
+    scheduler.enqueue = AsyncMock(
+        return_value=EnqueueOutcome(accepted=False, reason="queue_full")
+    )
+    app = FastAPI()
+    app.include_router(webhook.router)
+    app.state.scheduler = scheduler
+    client = TestClient(app)
+
+    payload = {
+        "installation": {"id": 1},
+        "repository": {"full_name": "o/r"},
+        "after": "a" * 40,
+    }
+    body = json.dumps(payload).encode()
+    resp = client.post(
+        "/webhook",
+        content=body,
+        headers={
+            "X-Hub-Signature-256": _sign(body),
+            "X-GitHub-Event": "push",
+            "X-GitHub-Delivery": "qf-1",
+        },
+    )
+    assert resp.status_code == 503
+    assert "queue full" in resp.json()["detail"].lower()
+
+
+def test_no_scheduler_on_app_state_returns_503(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If a deployment forgets to use the factory's lifespan,
+    surface a 503 rather than a 500 — the App is up but not ready."""
+    monkeypatch.setenv(config.WEBHOOK_SECRET_ENV, WEBHOOK_SECRET)
+    config.reset_delivery_cache_for_tests()
+
+    app = FastAPI()
+    app.include_router(webhook.router)
+    # Note: app.state.scheduler intentionally NOT set.
+    client = TestClient(app)
+
+    payload = {
+        "installation": {"id": 1},
+        "repository": {"full_name": "o/r"},
+        "after": "a" * 40,
+    }
+    body = json.dumps(payload).encode()
+    resp = client.post(
+        "/webhook",
+        content=body,
+        headers={
+            "X-Hub-Signature-256": _sign(body),
+            "X-GitHub-Event": "push",
+            "X-GitHub-Delivery": "ns-1",
+        },
+    )
+    assert resp.status_code == 503
 
 
 def test_logger_never_emits_secret_or_supplied_signature(

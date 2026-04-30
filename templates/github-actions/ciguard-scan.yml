@@ -31,7 +31,7 @@ jobs:
           cache: pip
 
       - name: Install ciguard (pinned)
-        run: pip install --upgrade pip && pip install ciguard==0.9.4
+        run: pip install --upgrade pip && pip install ciguard==0.10.0
 
       - name: Scan repository
         run: ciguard scan-repo . --output ciguard-results.json --offline

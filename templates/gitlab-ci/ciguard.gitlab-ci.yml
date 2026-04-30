@@ -3,13 +3,13 @@
 # Add this job to your .gitlab-ci.yml, OR use it as a reusable include:
 #
 #   include:
-#     - remote: 'https://raw.githubusercontent.com/Jo-Jo98/ciguard/v0.9.4/templates/gitlab-ci/ciguard.gitlab-ci.yml'
+#     - remote: 'https://raw.githubusercontent.com/Jo-Jo98/ciguard/v0.10.0/templates/gitlab-ci/ciguard.gitlab-ci.yml'
 #
 # The job runs ciguard against every recognised pipeline file in the
 # repo, exposes the JSON report as a job artifact, and can be wired
 # into the pipeline as a gate stage by changing `allow_failure: true`.
 #
-# Bump the version pin (`ciguard==0.9.4`) when you want to upgrade.
+# Bump the version pin (`ciguard==0.10.0`) when you want to upgrade.
 
 stages:
   - test
@@ -22,7 +22,7 @@ ciguard:
     # bypass network SCA lookups.
     CIGUARD_OFFLINE: "0"
   before_script:
-    - pip install --quiet ciguard==0.9.4
+    - pip install --quiet ciguard==0.10.0
   script:
     - |
       OFFLINE_FLAG=""

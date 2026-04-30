@@ -24,12 +24,14 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 
 from . import config
+from .scheduler import ScanJob
 
 logger = logging.getLogger("ciguard.app.webhook")
 
@@ -160,14 +162,124 @@ async def receive_webhook(
         response.status_code = status.HTTP_200_OK
         return {"status": "duplicate", "delivery": x_github_delivery}
 
-    # --- 4. Dispatch (step iii — placeholder) ---
-    # The scan worker / token broker / Check Run integration lands in
-    # subsequent v0.10.0 steps. For now the receiver is observable via
-    # the logger so integration tests can assert it ran.
+    # --- 4. Parse the verified payload + dispatch ---
+    # ONLY safe to JSON-parse AFTER signature verification. This is the
+    # design commitment from THREAT_MODEL.md: signature is over RAW
+    # bytes; parsing first leaves a window where attacker payload
+    # reaches application code.
+    job = _build_scan_job_from_verified_payload(
+        body=body, event=x_github_event,
+    )
+    if job is None:
+        # Event we don't act on (e.g. issue_comment, ping, installation
+        # bookkeeping). Acknowledge it cleanly — GitHub stops retrying.
+        logger.info(
+            "accepted webhook (no scan dispatched): event=%s delivery=%s",
+            _safe_for_log(x_github_event), _safe_for_log(x_github_delivery),
+        )
+        return {"status": "accepted", "delivery": x_github_delivery}
+
+    # The scheduler lives on app.state — attached at startup by
+    # `factory.create_app()`. If it isn't there we're in a test that
+    # didn't wire the lifespan; surface a 503 rather than a 500.
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if scheduler is None:
+        logger.error(
+            "no scheduler on app.state — receiver not wired correctly"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="App scheduler not initialised.",
+        )
+    outcome = await scheduler.enqueue(job)
+    if not outcome.accepted and outcome.reason == "queue_full":
+        # Backpressure — the threat model commits to surfacing the
+        # bounded queue overflow as 503 (DoS defence).
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scan queue full; retry later.",
+        )
+
     logger.info(
-        "accepted webhook: event=%s delivery=%s body_bytes=%d",
-        _safe_for_log(x_github_event), _safe_for_log(x_github_delivery), len(body),
+        "accepted webhook: event=%s delivery=%s body_bytes=%d outcome=%s",
+        _safe_for_log(x_github_event), _safe_for_log(x_github_delivery),
+        len(body), outcome.reason,
     )
 
     # --- 5. 202 ack within milliseconds ---
     return {"status": "accepted", "delivery": x_github_delivery}
+
+
+def _build_scan_job_from_verified_payload(
+    *, body: bytes, event: Optional[str],
+) -> Optional[ScanJob]:
+    """Parse the verified webhook body and emit a ScanJob if the event
+    is one we scan on. Returns None for events we don't act on.
+
+    Crucial security property: `installation_id` comes from the
+    `installation.id` field of the SIGNATURE-VERIFIED payload — never
+    from URL params, headers, query strings, or any other caller-
+    controlled input. THREAT_MODEL Surface 9 row "IDOR on
+    installation_id" closes here at the API boundary in addition to
+    the storage layer's keyword-only enforcement.
+    """
+    try:
+        payload: Any = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        # Verified-but-not-JSON shouldn't happen from GitHub, but if
+        # it does, treat as a no-op event rather than crashing.
+        logger.warning("verified webhook body is not JSON — skipping")
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    installation = payload.get("installation")
+    if not isinstance(installation, dict):
+        return None
+    installation_id = installation.get("id")
+    if not isinstance(installation_id, int) or installation_id <= 0:
+        return None
+
+    repo = payload.get("repository")
+    if not isinstance(repo, dict):
+        return None
+    repo_full_name = repo.get("full_name")
+    if not isinstance(repo_full_name, str):
+        return None
+
+    if event == "pull_request":
+        pr = payload.get("pull_request")
+        if not isinstance(pr, dict):
+            return None
+        head = pr.get("head")
+        if not isinstance(head, dict):
+            return None
+        sha = head.get("sha")
+        number = pr.get("number")
+        if not isinstance(sha, str) or not isinstance(number, int):
+            return None
+        return ScanJob(
+            installation_id=installation_id,
+            repo_full_name=repo_full_name,
+            head_sha=sha,
+            pr_number=number,
+            event="pull_request",
+        )
+
+    if event == "push":
+        sha = payload.get("after")
+        if not isinstance(sha, str):
+            return None
+        return ScanJob(
+            installation_id=installation_id,
+            repo_full_name=repo_full_name,
+            head_sha=sha,
+            pr_number=None,
+            event="push",
+        )
+
+    # Other events (installation, installation_repositories, ping):
+    # acknowledged but no scan dispatched — they're for App lifecycle,
+    # not for scanning a commit.
+    return None

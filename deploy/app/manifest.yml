@@ -1,0 +1,73 @@
+# ciguard GitHub App — registration manifest
+#
+# This is the canonical, reviewable record of EXACTLY what permissions
+# the ciguard App requires. Threat-model commitment from
+# `Project ciguard/THREAT_MODEL.md` Surface 9 design rationale: any
+# permission expansion must go through a manifest-diff review,
+# never silently in app code.
+#
+# To register a new App from this manifest (one-time, per organisation):
+#
+#   1. Visit https://github.com/settings/apps/new and pick "Create from
+#      manifest" — paste the contents of this file as JSON-or-YAML.
+#      (GitHub's UI accepts both; the field labels below mirror the
+#      JSON schema GitHub expects.)
+#
+#   2. Set the webhook URL to your `ciguard app` deployment, e.g.
+#      `https://ciguard.example.com/webhook`.
+#
+#   3. After creation, GitHub gives you:
+#        - App ID                  → `CIGUARD_APP_ID`
+#        - Private key (.pem)      → `CIGUARD_APP_PRIVATE_KEY` (env)
+#                                    or `CIGUARD_APP_PRIVATE_KEY_PATH`
+#        - Webhook secret          → `CIGUARD_APP_WEBHOOK_SECRET`
+#
+#   4. Set CIGUARD_APP_STORAGE_ROOT to a writable directory; the App
+#      will namespace `<installation_id>/<owner>/<repo>/baseline.json`
+#      under it (per-tenant isolation per THREAT_MODEL Surface 9).
+#
+# CYCLE-1.5 self-pentest must run against the App in the lab before
+# the install link is shared publicly — extends pentest-lab/ Terraform
+# with an ephemeral DO droplet.
+
+name: ciguard
+url: https://github.com/Jo-Jo98/ciguard
+description: |
+  ciguard scans CI/CD pipeline configs (GitHub Actions / GitLab CI /
+  Jenkinsfiles) for security misconfigurations on every PR.
+  See https://github.com/Jo-Jo98/ciguard for rules + threat model.
+
+# Webhook endpoint (override per deployment via the GitHub UI on the
+# created App; this URL in the manifest is a placeholder).
+hook_attributes:
+  url: https://ciguard.example.com/webhook
+  active: true
+
+# Permission set — minimal, by design. Each line is intentional.
+# THREAT_MODEL Surface 9: "App permissions over-scoped" closes here.
+default_permissions:
+  # Read workflow YAML — that's the scan target on GitHub Actions repos.
+  actions: read
+  # Read repo content (Jenkinsfile, .gitlab-ci.yml, source files referenced
+  # by the workflow).
+  contents: read
+  # Post review comments on PRs. Required surface for the inline
+  # findings UX.
+  pull_requests: write
+  # Post Check Runs gated on `--fail-on-new=High`. Required for the
+  # gate-the-merge UX.
+  checks: write
+  # Mandatory for any GitHub App; reads basic repo metadata.
+  metadata: read
+
+# Subscribed events — only what triggers a scan or registration change.
+default_events:
+  - pull_request
+  - push
+  - installation
+  - installation_repositories
+
+# Private to the org / personal account that creates it. Set to true on
+# first registration; flip to false later if you want to publish the
+# install link publicly. CYCLE-1.5 must complete BEFORE flipping.
+public: false

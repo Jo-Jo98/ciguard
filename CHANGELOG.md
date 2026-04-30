@@ -3,6 +3,39 @@
 All notable changes to `ciguard` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.10.0] — 2026-04-30
+
+**GitHub App — receiver wired, threat-modelled, ready for self-pentest.** ciguard now ships a FastAPI webhook receiver that scans PRs and posts results back as Check Runs + PR comments. Six build steps shipped over two days; 11 of 13 Surface 9 STRIDE rows closed in code (the other 2 close architecturally — no OAuth callback in the manifest install flow, manifest scope is the minimal permission set). The actual scan-against-real-repo execution is stubbed in this release; v0.10.1 will wire the clone-and-scan path. The stub posts an honest "scan execution lands in v0.10.1" notice on every Check Run so deployers can verify wiring end-to-end without being misled into thinking they're getting fake findings.
+
+### Threat model written first
+
+[`Project ciguard/THREAT_MODEL.md`](https://github.com/Jo-Jo98/ciguard/blob/main/Project%20ciguard/THREAT_MODEL.md) Surface 9 was drafted ahead of any App code (per Pentest Plan recommendation #2). 13 STRIDE rows covering webhook signature bypass, IDOR on installation_id, multi-tenant baseline bleed, webhook replay, payload DoS, PR-comment markdown injection, token leakage, App private key exposure, OAuth callback CSRF, Check Run state confusion, concurrent webhook race, manifest over-scope, post-revocation cached token. Five up-front design commitments locked the architecture before code: HMAC fail-closed, JWT broker isolation, sync-ack/async-scan, per-install storage namespace, minimal manifest.
+
+### What shipped (`src/ciguard/app/`, ~1,300 LOC + ~1,650 LOC tests)
+
+- **`webhook.py`** — HMAC-SHA256 over raw body, `hmac.compare_digest`, fail-closed 401 on every failure mode. X-GitHub-Delivery dedup against a 1h TTL cache. 25 MB body cap. 202 ack within milliseconds. CR/LF-stripped log values defeat log-injection.
+- **`tokens.py`** — JWT signing isolated to `_mint_jwt()` (RS256, 9-min lifetime, `iat` backdated 30s for clock skew). Per-installation token cache, 30-min TTL (half of GitHub's 1h default). Logger emits `ghs_a3df…` prefixes only — never full tokens, JWTs, or private keys. 401 from any GitHub API call invalidates the cached token.
+- **`scheduler.py`** — Async scan scheduler. Idempotency key `(installation_id, head_sha)` collapses duplicate same-SHA deliveries. Per-`(installation_id, repo)` `asyncio.Lock` serialises baseline writes (different repos run in parallel). Bounded queue (128) + bounded worker pool (2 default). Queue overflow surfaces as 503 backpressure.
+- **`checks.py`** — GitHub REST helpers + markdown sanitisers. Evidence wrapped in 4-backtick fences with backtick-run neutralisation; inline values backslash-escape markdown specials and HTML-encode `<>`. PR comment upsert via hidden `<!-- ciguard:pr-marker:v1 -->` HTML-comment marker so retries / concurrent events don't stack duplicates. 401 → token invalidate contract.
+- **`scan_runner.py`** — `run_scan()` orchestrator: create `in_progress` Check Run → execute → finalize. Every exception path routes through `set_check_run_failed()`; the Check Run never remains `in_progress` after a crash and never silently flips to `success`. Tested with five exception shapes (executor raises, complete raises, comment-post raises, set_failed itself fails, malformed repo).
+- **`storage.py`** — Per-installation storage namespacing. Every read/write requires `verified_installation_id: int` keyword-only — positional / string / `bool` / zero / negative all reject. Storage layout `<storage_root>/<installation_id>/<owner>/<repo>/baseline.json`. Atomic write-via-tempfile-rename. Path traversal in repo names rejected via regex + defensive `..` reject + resolved-path-under-root assert.
+- **`factory.py`** — FastAPI app factory + lifespan that wires `ScanScheduler` to `app.state` on startup, drains on shutdown. Stub `_stub_scan_executor` for v0.10.0; real executor injection point ready for v0.10.1.
+- **`ciguard app` CLI subcommand** — uvicorn launcher with pre-flight env-var check (refuses to start if `CIGUARD_APP_WEBHOOK_SECRET` / `CIGUARD_APP_ID` / private-key env are missing). Yellow warning when binding non-loopback. Same shape as `ciguard mcp` and `ciguard web`.
+- **`deploy/app/manifest.yml`** — Reviewable App registration manifest. Exact permission set: `Actions: read`, `Contents: read`, `Pull requests: write`, `Checks: write`, `Metadata: read`. No org / admin / repo-write outside the comment surface. Any expansion is a manifest-diff review.
+- **`README.md`** — New "Running the GitHub App" section: install via `pip install 'ciguard[app]'`, manifest registration walkthrough, env config, security-posture summary.
+
+### Test count progression
+
+502 (v0.9.4 baseline) → 621 (+119 across 7 new test files in `tests/test_app_*.py`). Every test docstring names the Surface 9 STRIDE row(s) it covers.
+
+### Pentest cadence
+
+Cycle 2's regular cadence (2026-10-15) is too late to gate the App's first public install. **CYCLE-1.5 self-pentest** runs against the App in the lab before the install link is shared more broadly: scope = the 13 Surface 9 threats; method = same Cycle 1 methodology compressed for narrow scope; lab = ephemeral DigitalOcean droplet via `pentest-lab/` Terraform; report at `Project ciguard/Pentest Reports/<date>-cycle-1.5.md`. External pentest stays an aspirational option, not a sequencing precondition.
+
+### What's next (v0.10.1)
+
+The real scan executor: clone the repo via `git clone https://x-access-token:<installation-token>@github.com/...`, run `ciguard scan-repo` against the local checkout, render results into the Check Run + PR comment. Plumbing work, not architecture — the threat model + framework are stable.
+
 ## [0.9.4] — 2026-04-29
 
 **Drop-in CI templates — Slice 9 carve-out.** Pre-built workflow files for the three supported platforms (GitHub Actions, GitLab CI, Jenkins) so users can wire ciguard into their CI in one paste. No Python source changes; this release is templates-only.

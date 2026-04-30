@@ -26,7 +26,7 @@ pipeline {
                         docker run --rm \
                             -v "$WORKSPACE":/repo \
                             -w /repo \
-                            ghcr.io/jo-jo98/ciguard:v0.9.4 \
+                            ghcr.io/jo-jo98/ciguard:v0.10.0 \
                             scan-repo /repo \
                                 --output /repo/ciguard-results.json \
                                 --fail-on High \
