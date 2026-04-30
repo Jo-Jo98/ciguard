@@ -70,6 +70,34 @@ def test_duplicate_installation_id_and_head_dedups() -> None:
     _run(_inner)
 
 
+def test_push_and_pull_request_for_same_head_sha_both_run() -> None:
+    """Caught on the v0.10.0 smoke test (2026-04-30). When `git push`
+    with an open PR fires both `push` (pr_number=None) and
+    `pull_request.synchronize` (pr_number=N) within ~1s for the same
+    head SHA, BOTH must dispatch — push gets a Check Run, the PR
+    event additionally posts the inline comment. Without pr_number
+    in the idempotency key, push wins the race and the PR comment
+    never gets posted."""
+    scanned: list[ScanJob] = []
+
+    async def stub_scan(job: ScanJob) -> None:
+        scanned.append(job)
+
+    async def _inner() -> None:
+        sched = ScanScheduler(stub_scan, num_workers=1)
+        await sched.start()
+        try:
+            push_out = await sched.enqueue(_job(event="push", pr=None))
+            pr_out = await sched.enqueue(_job(event="pull_request", pr=42))
+            await asyncio.sleep(0.05)
+        finally:
+            await sched.shutdown()
+        assert push_out.accepted is True
+        assert pr_out.accepted is True
+        assert len(scanned) == 2
+        assert {j.pr_number for j in scanned} == {None, 42}
+
+
 def test_different_installations_with_same_sha_do_not_dedup() -> None:
     """The dedup key is the FULL tuple — same SHA in different
     installations must each run."""

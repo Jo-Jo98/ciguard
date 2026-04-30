@@ -67,8 +67,14 @@ class ScanJob:
     event: str = "push"
 
     @property
-    def idempotency_key(self) -> tuple[int, str]:
-        return (self.installation_id, self.head_sha)
+    def idempotency_key(self) -> tuple[int, str, Optional[int]]:
+        # Include pr_number so push (pr=None) and pull_request (pr=N) for
+        # the same head SHA do NOT collide. Without this, `git push` of a
+        # branch with an open PR fires push first, gets dedup-claimed, and
+        # the immediately-following pull_request.synchronize collapses —
+        # leaving the PR with a Check Run but no inline comment.
+        # (v0.10.0 smoke test caught this on 2026-04-30.)
+        return (self.installation_id, self.head_sha, self.pr_number)
 
     @property
     def baseline_key(self) -> tuple[int, str]:
