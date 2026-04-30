@@ -23,6 +23,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from ciguard.models.pipeline import (  # noqa: E402
@@ -117,8 +119,12 @@ def test_render_pipeline_name_html_escaped() -> None:
 
 def test_render_grade_and_score_in_header() -> None:
     out = html_interactive.render(_basic_report(jobs=[Job(name="build")]))
-    assert ">B</span>" in out
-    assert "87.5/100" in out
+    # Grade pill carries the letter as both class + text
+    assert 'class="grade-pill B"' in out
+    assert ">B</div>" in out
+    # Score is rounded to integer in the header (compact display)
+    assert ">88<" in out  # 87.5 rounds to 88
+    assert ">/100<" in out
 
 
 # ===========================================================================
@@ -298,6 +304,88 @@ def test_findings_carry_fingerprint() -> None:
     out = html_interactive.render(_basic_report(jobs=jobs, findings=findings))
     data = _extract_json(out)
     assert data["findings"][0]["fingerprint"]
+
+
+# ===========================================================================
+# Image pin-status detection (Slice 14c preview baked into 14a data)
+# ===========================================================================
+
+
+@pytest.mark.parametrize("image,expected", [
+    (None, ""),
+    ("alpine:latest", "mutable"),
+    ("alpine", "mutable"),
+    ("alpine:stable", "mutable"),
+    ("nginx:edge", "mutable"),
+    ("ubuntu:main", "mutable"),
+    ("python:3.11.4", "tag"),
+    ("python:3.11.4-slim", "tag"),
+    ("ghcr.io/org/img:1.2.3", "tag"),
+    ("python@sha256:" + "a" * 64, "digest"),
+    ("ghcr.io/org/img:1.2.3@sha256:" + "b" * 64, "digest"),
+])
+def test_image_pin_status_classification(image: str | None, expected: str) -> None:
+    assert html_interactive._image_pin_status(image) == expected
+
+
+def test_pin_status_carried_through_to_node_data() -> None:
+    jobs = [
+        Job(name="build", image="python@sha256:" + "a" * 64),
+        Job(name="test", image="python:3.11"),
+        Job(name="deploy", image="alpine:latest"),
+    ]
+    out = html_interactive.render(_basic_report(jobs=jobs))
+    data = _extract_json(out)
+    by_name = {j["name"]: j for j in data["jobs"]}
+    assert by_name["build"]["pin_status"] == "digest"
+    assert by_name["test"]["pin_status"] == "tag"
+    assert by_name["deploy"]["pin_status"] == "mutable"
+
+
+# ===========================================================================
+# Per-severity counts on each job (badge population)
+# ===========================================================================
+
+
+def test_findings_by_severity_per_job() -> None:
+    findings = [
+        _finding("X-1", Severity.CRITICAL, "build"),
+        _finding("X-2", Severity.HIGH, "build"),
+        _finding("X-3", Severity.HIGH, "build"),
+        _finding("X-4", Severity.LOW, "build"),
+    ]
+    jobs = [Job(name="build")]
+    out = html_interactive.render(_basic_report(jobs=jobs, findings=findings))
+    data = _extract_json(out)
+    counts = data["jobs"][0]["findings_by_severity"]
+    assert counts == {"Critical": 1, "High": 2, "Low": 1}
+
+
+# ===========================================================================
+# Header / sidebar / legend HTML scaffold
+# ===========================================================================
+
+
+def test_header_renders_severity_chips_for_every_severity() -> None:
+    out = html_interactive.render(_basic_report(jobs=[Job(name="build")]))
+    for sev in ("Critical", "High", "Medium", "Low", "Info"):
+        assert f"0 {sev}" in out
+
+
+def test_findings_sidebar_present() -> None:
+    out = html_interactive.render(_basic_report(jobs=[Job(name="build")]))
+    assert 'id="side-panel"' in out
+    assert 'id="findings-list"' in out
+    assert 'class="filter-btn' in out
+    assert 'data-sev="Critical"' in out
+
+
+def test_legend_present_with_pin_vocabulary() -> None:
+    out = html_interactive.render(_basic_report(jobs=[Job(name="build")]))
+    assert "DIGEST" in out
+    assert "MUTABLE" in out
+    assert "PROD target" in out
+    assert "Manual gate" in out
 
 
 # ===========================================================================
