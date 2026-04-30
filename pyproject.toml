@@ -81,7 +81,11 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-ciguard = ["reporter/templates/*.html", "web/templates/*.html"]
+ciguard = [
+    "reporter/templates/*.html",
+    "reporter/_assets/*.js",
+    "web/templates/*.html",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

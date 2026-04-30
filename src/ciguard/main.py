@@ -363,6 +363,12 @@ def cmd_scan(args: argparse.Namespace) -> int:
             print(f"{_RED}FAILED{_RESET}")
             print(f"  PDF requires reportlab: pip install reportlab\n  {exc}", file=sys.stderr)
             return 1
+    elif fmt == "html-interactive":
+        # v0.11.x Slice 14a — interactive D3 pipeline map. Self-contained
+        # HTML output (vendored D3 inline). The post-pivot hero artifact.
+        from ciguard.reporter import html_interactive
+        html_interactive.write_report(report, output_path)
+        print(f"{_GREEN}OK{_RESET}  → {output_path}")
     elif suffix == ".html" or fmt == "html":
         reporter = HTMLReporter()
         reporter.write(report, output_path)
@@ -662,7 +668,8 @@ def main() -> int:
         help="Output path for the report (.html, .json, or .pdf)."
     )
     scan_parser.add_argument(
-        "--format", "-f", default=None, choices=["html", "json", "pdf", "sarif"],
+        "--format", "-f", default=None,
+        choices=["html", "html-interactive", "json", "pdf", "sarif"],
         help="Output format override (html, json, pdf, sarif).",
     )
     scan_parser.add_argument(
