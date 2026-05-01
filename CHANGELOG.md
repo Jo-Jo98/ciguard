@@ -3,6 +3,21 @@
 All notable changes to `ciguard` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added — Slice 14c (pin-discipline rule emitters)
+
+- **`SCA-PIN-002` — Image Uses Mutable Tag** (High). Cross-platform supply-chain rule. Fires for image references using a mutable tag name (`:latest`, `:stable`, `:edge`, `:prod`, `:production`, `:main`, `:master`, `:dev`, `:development`, `:nightly`) or no tag at all (Docker resolves bare names to `:latest`). Severity High by default — this is the OWASP CICD-SEC-3 / tj-actions-changed-files-style attack surface. Standards mapping: SLSA Level 2+, NIST SSDF PW.4.1, CIS Docker 4.7. Intentionally overlaps with the per-platform `PIPE-001` / `GHA-PIPE-001` / `JKN-PIPE-001` `:latest` checks — same surface, two perspectives (platform-rule + cross-platform supply-chain). Operators who find the duplicate noisy can `.ciguardignore` either side.
+- **`SCA-PIN-004` — Helm Chart Pulled Without Pinned Version** (Medium). Cross-platform script-content rule. Fires for `helm install` / `helm upgrade` / `helm pull` invocations inside any job script that lack a `--version` flag, or where `--version` is set to a mutable label (`latest`, `stable`, `main`, `master`, `dev`, `*`). `helm template` and `helm upgrade --reuse-values` are skipped — they're legitimate version-not-required patterns. Standards mapping: OWASP CICD-SEC-3, PCI DSS 4.0 Req 6.3.
+
+### Deferred
+
+- `SCA-PIN-003` (cross-pipeline drift detection) was scoped in Slice 14c but requires aggregating image references across multiple pipeline files in a single scan — that lives in `repo_scan.py`, not the per-pipeline rule contract. Will land alongside cross-pipeline aggregation plumbing in a follow-up.
+
+### Documentation
+
+- Rule numbering convention ratified in the audit-scope memory: ciguard rule IDs follow the `<FAMILY>-<SUBFAMILY>-<NNN>` flat-counter pattern (Pattern 2 — Checkov / Bandit style). Severity, sub-classification, and standards mappings live in metadata fields on the `Finding` object, not encoded in the ID. Earlier audit-scope spec had `SCA-PIN-001` = mutable tag (High); corrected to keep the existing v0.6.0 digest rule at `SCA-PIN-001` and add the new mutable-tag rule at the next free number.
+
 ## [0.10.0] — 2026-04-30
 
 **GitHub App — receiver wired, threat-modelled, ready for self-pentest.** ciguard now ships a FastAPI webhook receiver that scans PRs and posts results back as Check Runs + PR comments. Six build steps shipped over two days; 11 of 13 Surface 9 STRIDE rows closed in code (the other 2 close architecturally — no OAuth callback in the manifest install flow, manifest scope is the minimal permission set). The actual scan-against-real-repo execution is stubbed in this release; v0.10.1 will wire the clone-and-scan path. The stub posts an honest "scan execution lands in v0.10.1" notice on every Check Run so deployers can verify wiring end-to-end without being misled into thinking they're getting fake findings.

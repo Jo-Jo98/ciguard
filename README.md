@@ -75,8 +75,9 @@ Exit codes: `0` clean, `2` critical findings, `1` error.
 ## Features
 
 - **Three platforms** — GitLab CI (19 rules), GitHub Actions (12 rules covering supply-chain, IAM, runner, deploy-governance, plus advanced GHA-specific risks: `pull_request_target` misuse, token-theft windows, `secrets: inherit` to unpinned reusable workflows, bare self-hosted runners), and Jenkins Declarative Pipelines (6 rules: unpinned docker agents, hardcoded secrets, unconstrained `agent any`, privileged docker args, dangerous shell patterns, dynamic Groovy `script {}` blocks). Format auto-detected by filename / content sniff / YAML shape; `--platform` override available.
-- **37 deterministic security rules** across 6 categories
-  (Pipeline Integrity, Identity & Access, Runner Security, Artifact Handling, Deployment Governance, Supply Chain)
+- **46 deterministic security rules** across 6 categories
+  (Pipeline Integrity, Identity & Access, Runner Security, Artifact Handling, Deployment Governance, Supply Chain),
+  including a cross-platform pin-discipline family (`SCA-PIN-001/002/004`) covering digest pinning, mutable-tag detection, and Helm chart version pinning
 - **Policy engine** — 17 built-in organisational policies (7 GitLab CI + 6 GitHub Actions + 4 Jenkins) plus custom YAML policies. Each built-in declares the platforms it applies to; the evaluator filters automatically.
 - **Scanner integrations** — Semgrep CE, OpenSSF Scorecard, GitLab native security artifacts (all optional, graceful when unavailable)
 - **AI enrichment** — optional Claude / OpenAI executive summaries and remediation plans

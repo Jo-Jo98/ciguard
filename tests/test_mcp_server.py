@@ -289,7 +289,12 @@ class TestDiffBaseline:
         from ciguard.parser.gitlab_parser import GitLabCIParser
 
         bad = FIXTURES / "bad_pipeline.yml"
-        report = AnalysisEngine(enable_sca=False).analyse(
+        # Baseline must be seeded with the same SCA configuration as the
+        # rescan — `ciguard.diff_baseline` rescans with SCA enabled by
+        # default in offline mode. An SCA-less baseline would show every
+        # SCA finding as "new" on every diff. `sca_offline=True` keeps
+        # the test hermetic against external EOL/CVE feeds.
+        report = AnalysisEngine(enable_sca=True, sca_offline=True).analyse(
             GitLabCIParser().parse_file(bad), bad.name
         )
         baseline = tmp_path / "baseline.json"

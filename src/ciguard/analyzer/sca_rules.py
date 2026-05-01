@@ -1,5 +1,5 @@
 """
-SCA (Software Composition Analysis) rules — v0.6.0 + v0.6.1.
+SCA (Software Composition Analysis) rules — v0.6.0 + v0.6.1 + Slice 14c.
 
 These rules cross-reference container image / language runtime / GHA action
 references in the pipeline against external lifecycle and vulnerability
@@ -9,8 +9,15 @@ data to flag:
     SCA-EOL-002  Pinned language runtime is past end-of-life       (Crit / High)
     SCA-EOL-003  Image / runtime is approaching EOL                (graduated, v0.6.1)
     SCA-PIN-001  Image is tag-pinned but not digest-pinned         (Low)
+    SCA-PIN-002  Image uses a mutable tag                          (High — Slice 14c)
+    SCA-PIN-004  Helm/Kubectl pulls non-versioned chart or image   (Medium — Slice 14c)
     SCA-EOS-001  Image / runtime past end-of-active-support        (Low — v0.6.1)
     SCA-CVE-001  GHA action / reusable workflow has known CVE      (varies — v0.6.1)
+
+SCA-PIN-003 (cross-pipeline drift) is described in the audit-scope spec but
+deferred: it requires aggregating image references across multiple pipeline
+files in one scan, which lives in `repo_scan.py` rather than the
+per-pipeline rule contract. Will land alongside `scan-repo` plumbing.
 
 EOL/EOS/PIN rules run for every platform (GitLab CI, GitHub Actions, Jenkins)
 since each can reference container images. The image extraction layer
@@ -45,6 +52,7 @@ These bands replace v0.6.0's single-tier ≤90d Info to give Joe's
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Callable, List, Optional, Union
 
@@ -296,6 +304,252 @@ def rule_sca_pin_001(
 
 
 # ---------------------------------------------------------------------------
+# SCA-PIN-002 — Mutable tag (cross-platform, High) — Slice 14c
+# ---------------------------------------------------------------------------
+
+# Tag values that are mutable by convention — the publisher routinely
+# re-points them to newer content. These are the supply-chain-attack surface
+# named by OWASP CICD-SEC-3 and the tj-actions/changed-files March 2025
+# incident. `latest` is the canonical example; the others are common
+# floating-tag patterns we see in real pipelines.
+_MUTABLE_TAGS = frozenset({
+    "latest",
+    "stable",
+    "edge",
+    "prod",
+    "production",
+    "main",
+    "master",
+    "dev",
+    "development",
+    "nightly",
+})
+
+_PIN_002_COMPLIANCE = ComplianceMapping(
+    iso_27001=["A.12.5.1", "A.14.2.2", "A.14.2.4"],
+    soc2=["CC6.8", "CC8.1"],
+    nist=["PR.IP-1", "PR.DS-6"],
+)
+
+
+def rule_sca_pin_002(
+    target: SCATarget,
+    eol: EndOfLifeClient,
+    osv: OSVClient,
+) -> List[Finding]:
+    """Image references using a mutable tag (`:latest`, `:stable`, `:edge`,
+    `:main`, etc.) or no tag at all.
+
+    Mutable tags are the canonical supply-chain attack vector — the publisher
+    can re-point the same name to different content (intentionally, or via
+    account compromise). The tj-actions/changed-files incident (March 2025)
+    repointed `v35` for ~23,000 repos in a single push.
+
+    Cross-platform — fires for GitLab CI / GitHub Actions container refs /
+    Jenkins docker agents alike. Severity is High by default.
+
+    Overlap with PIPE-001 / GHA-PIPE-001 / JKN-PIPE-001 is intentional: the
+    per-platform rules cover `:latest` from the platform-rule perspective
+    (severity / category align with their family); this rule covers the
+    same surface from the cross-platform supply-chain perspective with
+    standards-anchored remediation. Operators who find the duplicate noisy
+    can `.ciguardignore` either side."""
+    del eol, osv
+    findings: List[Finding] = []
+    for image in extract_images(target):
+        if image.is_digest_pinned:
+            continue          # digest is the strongest pinning — never mutable
+        tag_lower = (image.tag or "").lower()
+        if tag_lower and tag_lower not in _MUTABLE_TAGS:
+            continue          # versioned tag, even if not digest — SCA-PIN-001 handles
+        # Either no tag at all, or one of the well-known mutable tag names.
+        if image.tag:
+            evidence = f"image: {image.raw}"
+            description = (
+                f"Image `{image.name}:{image.tag}` uses a mutable tag — the "
+                f"publisher can re-point `{image.tag}` to different content "
+                "at any time. This is the supply-chain attack surface named "
+                "by OWASP CICD-SEC-3 (Dependency Chain Abuse) and exploited "
+                "in the March 2025 tj-actions/changed-files incident."
+            )
+            remediation_image = f"{image.name}:<version>"
+        else:
+            evidence = f"image: {image.raw}"
+            description = (
+                f"Image `{image.name}` is referenced without a tag — Docker "
+                "treats this as `:latest`, which is mutable. The publisher "
+                "can re-point `latest` to different content at any time."
+            )
+            remediation_image = f"{image.name}:<version>"
+        findings.append(Finding(
+            id=_finding_id("SCA-PIN-002"),
+            rule_id="SCA-PIN-002",
+            name="Image Uses Mutable Tag",
+            description=description,
+            severity=Severity.HIGH,
+            category=Category.SUPPLY_CHAIN,
+            location=image.location,
+            evidence=evidence,
+            remediation=(
+                f"Pin `{image.name}` to a specific version, ideally with a "
+                "digest. Resolve the current digest with `docker pull "
+                f"{image.name}:<version> && docker inspect "
+                f"{image.name}:<version> --format '{{{{.Id}}}}'`, then update "
+                f"the pipeline to `image: {remediation_image}@sha256:<digest>`. "
+                "Automate digest updates with Renovate or Dependabot's docker "
+                "ecosystem so you stay current without re-introducing a "
+                "mutable reference."
+            ),
+            compliance=_PIN_002_COMPLIANCE,
+        ))
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# SCA-PIN-004 — Helm / kubectl mutable pull (cross-platform, Medium) — Slice 14c
+# ---------------------------------------------------------------------------
+
+# Helm / kubectl invocations inside job scripts that fetch a non-versioned
+# chart / image. The patterns below are intentionally conservative — the
+# false-positive cost in a CI report is high, and a `helm install` against
+# a previously-installed release with `--reuse-values` is a legitimate
+# operational pattern we should NOT flag.
+
+# Match `helm install` and `helm upgrade` invocations. Captures everything
+# after the verb on the same line for sub-flag inspection.
+_HELM_INVOKE_RE = re.compile(
+    r"\bhelm\s+(?P<verb>install|upgrade|pull|template)\b(?P<args>[^\n]*)",
+    re.IGNORECASE,
+)
+
+# Look for a `--version <value>` or `--version=<value>` flag inside a
+# helm command's argument string.
+_HELM_VERSION_FLAG_RE = re.compile(
+    r"--version(?:=|\s+)(?P<value>[^\s]+)",
+    re.IGNORECASE,
+)
+
+# Floating values that defeat the purpose of `--version`. Mirrors the
+# image-mutable-tag set but keyed to the helm-chart vocabulary.
+_HELM_MUTABLE_VERSIONS = frozenset({
+    "latest", "stable", "main", "master", "dev", "*",
+})
+
+_PIN_004_COMPLIANCE = ComplianceMapping(
+    iso_27001=["A.12.5.1", "A.14.2.2"],
+    soc2=["CC6.8", "CC8.1"],
+    nist=["PR.IP-1", "PR.DS-6"],
+)
+
+
+def _iter_script_lines(target: SCATarget) -> List[tuple[str, str]]:
+    """Return `(location_label, script_line)` tuples for every shell-script
+    line across the three platform models. Used by script-content rules
+    (SCA-PIN-004) that need to grep across job bodies."""
+    out: List[tuple[str, str]] = []
+    if isinstance(target, Pipeline):
+        for job in target.jobs:
+            for line in job.all_scripts():
+                out.append((f"job[{job.name}].script", line))
+    elif isinstance(target, Workflow):
+        for job in target.jobs:
+            label_id = job.id or job.name
+            for line in job.all_run_lines():
+                out.append((f"jobs.{label_id}.steps[].run", line))
+    elif isinstance(target, Jenkinsfile):
+        for stage_name, body in target.all_step_scripts():
+            for line in body.splitlines():
+                if line.strip():
+                    out.append((f"stage[{stage_name}].steps[].sh", line))
+    return out
+
+
+def _helm_finding_for_line(location: str, line: str) -> Optional[Finding]:
+    """Inspect a single shell line for a non-versioned helm invocation.
+    Returns one Finding or None. Multiple helm calls on one line each
+    produce a finding via the caller's outer loop."""
+    m = _HELM_INVOKE_RE.search(line)
+    if not m:
+        return None
+    verb = m.group("verb").lower()
+    args = m.group("args") or ""
+    # `helm template` / `helm upgrade --reuse-values` are legitimate
+    # version-not-required patterns; skip them.
+    if verb == "template":
+        return None
+    if verb == "upgrade" and "--reuse-values" in args:
+        return None
+    version_match = _HELM_VERSION_FLAG_RE.search(args)
+    if version_match:
+        version_value = version_match.group("value").strip().strip("\"'")
+        if version_value.lower() in _HELM_MUTABLE_VERSIONS:
+            problem = f"`helm {verb} --version {version_value}`"
+            description = (
+                f"Helm chart pulled with mutable version `{version_value}` "
+                "— the chart maintainer can re-point this label to different "
+                "content at any time. Pin to a specific chart version "
+                "(SemVer) so deployments are reproducible and a compromised "
+                "upstream chart can be detected by version drift."
+            )
+        else:
+            return None       # versioned, looks fine
+    else:
+        problem = f"`helm {verb}` without `--version`"
+        description = (
+            f"Helm `{verb}` invoked without `--version` — Helm resolves to "
+            "the latest chart version available in the configured "
+            "repositories at install time. This makes deployments "
+            "non-reproducible and exposes the pipeline to upstream chart "
+            "tampering. Always pin the chart version explicitly."
+        )
+    return Finding(
+        id=_finding_id("SCA-PIN-004"),
+        rule_id="SCA-PIN-004",
+        name="Helm Chart Pulled Without Pinned Version",
+        description=description,
+        severity=Severity.MEDIUM,
+        category=Category.SUPPLY_CHAIN,
+        location=location,
+        evidence=line.strip()[:200],
+        remediation=(
+            "Pin the chart by passing `--version <semver>` (e.g. "
+            "`--version 1.2.3`) on every `helm install` / `helm upgrade` / "
+            "`helm pull` invocation. Track chart upgrades through a "
+            "deliberate bump rather than implicit floating-version drift. "
+            "For supply-chain assurance, also verify the chart against a "
+            "Sigstore signature where the publisher provides one."
+        ),
+        compliance=_PIN_004_COMPLIANCE,
+    )
+
+
+def rule_sca_pin_004(
+    target: SCATarget,
+    eol: EndOfLifeClient,
+    osv: OSVClient,
+) -> List[Finding]:
+    """SCA-PIN-004 — Helm / kubectl invocations inside job scripts that
+    fetch a non-versioned chart or image.
+
+    Detects `helm install` / `helm upgrade` / `helm pull` without a
+    `--version` flag, or with `--version` set to a mutable label
+    (`latest`, `stable`, etc.). `helm template` and `helm upgrade
+    --reuse-values` are skipped — they're legitimate version-not-required
+    patterns.
+
+    Severity Medium: this is operational hygiene rather than an active
+    attack surface, but a pinned chart is the only way to make a Helm
+    deploy reproducible AND to detect upstream chart tampering."""
+    del eol, osv
+    findings: List[Finding] = []
+    for location, line in _iter_script_lines(target):
+        finding = _helm_finding_for_line(location, line)
+        if finding:
+            findings.append(finding)
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # SCA-EOS-001 — End-of-active-support detection (v0.6.1)
 # ---------------------------------------------------------------------------
 
@@ -502,6 +756,8 @@ def rule_sca_cve_001(
 SCA_RULES: List[SCARuleFunc] = [
     rule_sca_eol,
     rule_sca_pin_001,
+    rule_sca_pin_002,
+    rule_sca_pin_004,
     rule_sca_eos_001,
     rule_sca_cve_001,
 ]

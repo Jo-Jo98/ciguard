@@ -33,8 +33,11 @@ from ciguard.analyzer.sca_rules import (
     rule_sca_eol,
     rule_sca_eos_001,
     rule_sca_pin_001,
+    rule_sca_pin_002,
+    rule_sca_pin_004,
     _eol_severity_and_label,
 )
+from ciguard.models.jenkinsfile import Jenkinsfile, Stage, Step as JkStep
 from ciguard.models.pipeline import Job, Pipeline, Severity
 from ciguard.models.workflow import Job as WfJob, Step, Workflow
 
@@ -810,3 +813,226 @@ class TestSCAResponseSizeCap:
         client = osv.OSVClient(cache_dir=tmp_path, offline=False)
         result = client._fetch(osv.ECOSYSTEM_GITHUB_ACTIONS, "actions/checkout", "1.0.0")
         assert result is not None and len(result) == 1
+
+
+# ---------------------------------------------------------------------------
+# SCA-PIN-002 — mutable tag (cross-platform, High) — Slice 14c
+# ---------------------------------------------------------------------------
+
+def _offline_eol(tmp_path: Path) -> EndOfLifeClient:
+    return EndOfLifeClient(cache_dir=tmp_path, offline=True)
+
+
+class TestScaPin002GitLab:
+    def setup_method(self):
+        import tempfile
+        self._eol_tmp = Path(tempfile.mkdtemp(prefix="ciguard-pin002-eol-"))
+        self._osv_tmp = Path(tempfile.mkdtemp(prefix="ciguard-pin002-osv-"))
+
+    def _run(self, image: str):
+        pipe = _make_pipeline({"build": image})
+        return rule_sca_pin_002(
+            pipe, _offline_eol(self._eol_tmp), _offline_osv(self._osv_tmp),
+        )
+
+    def test_fires_on_latest(self):
+        findings = self._run("alpine:latest")
+        assert len(findings) == 1
+        assert findings[0].rule_id == "SCA-PIN-002"
+        assert findings[0].severity == Severity.HIGH
+
+    def test_fires_on_stable(self):
+        assert len(self._run("alpine:stable")) == 1
+
+    def test_fires_on_main_master_edge(self):
+        assert len(self._run("nginx:main")) == 1
+        assert len(self._run("nginx:master")) == 1
+        assert len(self._run("nginx:edge")) == 1
+
+    def test_fires_on_untagged(self):
+        # Bare `python` resolves to `:latest` per Docker convention.
+        findings = self._run("python")
+        assert len(findings) == 1
+        assert "without a tag" in findings[0].description.lower()
+
+    def test_silent_on_versioned_tag(self):
+        # SCA-PIN-001 handles "versioned but not digest"; PIN-002 stays quiet.
+        assert self._run("alpine:3.21") == []
+
+    def test_silent_on_digest_pinned(self):
+        digest = "sha256:" + "a" * 64
+        assert self._run(f"alpine:3.21@{digest}") == []
+        assert self._run(f"alpine@{digest}") == []
+
+    def test_case_insensitive_tag_match(self):
+        # `:LATEST` is the same supply-chain risk as `:latest`.
+        assert len(self._run("alpine:LATEST")) == 1
+
+    def test_remediation_names_image(self):
+        f = self._run("python")[0]
+        assert "python" in f.remediation
+        assert "@sha256:" in f.remediation
+
+
+class TestScaPin002GitHubActions:
+    def setup_method(self):
+        import tempfile
+        self._eol_tmp = Path(tempfile.mkdtemp(prefix="ciguard-pin002-gha-"))
+        self._osv_tmp = Path(tempfile.mkdtemp(prefix="ciguard-pin002-gha-osv-"))
+
+    def test_fires_on_container_latest(self):
+        wf = Workflow(
+            name="ci",
+            jobs=[WfJob(id="build", container="node:latest", steps=[])],
+        )
+        findings = rule_sca_pin_002(
+            wf, _offline_eol(self._eol_tmp), _offline_osv(self._osv_tmp),
+        )
+        assert len(findings) == 1
+        assert findings[0].severity == Severity.HIGH
+
+    def test_silent_on_container_pinned(self):
+        wf = Workflow(
+            name="ci",
+            jobs=[WfJob(id="build", container="node:20.10.0", steps=[])],
+        )
+        assert rule_sca_pin_002(
+            wf, _offline_eol(self._eol_tmp), _offline_osv(self._osv_tmp),
+        ) == []
+
+
+class TestScaPin002Jenkins:
+    def setup_method(self):
+        import tempfile
+        self._eol_tmp = Path(tempfile.mkdtemp(prefix="ciguard-pin002-jkn-"))
+        self._osv_tmp = Path(tempfile.mkdtemp(prefix="ciguard-pin002-jkn-osv-"))
+
+    def test_fires_on_stage_agent_latest(self):
+        from ciguard.models.jenkinsfile import Agent
+        jf = Jenkinsfile(
+            style="declarative",
+            stages=[Stage(name="build", agent=Agent(image="maven:latest"))],
+        )
+        findings = rule_sca_pin_002(
+            jf, _offline_eol(self._eol_tmp), _offline_osv(self._osv_tmp),
+        )
+        assert len(findings) == 1
+        assert findings[0].location.startswith("stage[build]")
+
+
+# ---------------------------------------------------------------------------
+# SCA-PIN-004 — Helm / kubectl mutable pull (cross-platform, Medium)
+# ---------------------------------------------------------------------------
+
+class TestScaPin004GitLab:
+    def setup_method(self):
+        import tempfile
+        self._eol_tmp = Path(tempfile.mkdtemp(prefix="ciguard-pin004-"))
+        self._osv_tmp = Path(tempfile.mkdtemp(prefix="ciguard-pin004-osv-"))
+
+    def _run(self, *script_lines: str):
+        pipe = Pipeline(
+            stages=[],
+            jobs=[Job(name="deploy", script=list(script_lines))],
+        )
+        return rule_sca_pin_004(
+            pipe, _offline_eol(self._eol_tmp), _offline_osv(self._osv_tmp),
+        )
+
+    def test_fires_on_helm_install_no_version(self):
+        findings = self._run("helm install nginx bitnami/nginx")
+        assert len(findings) == 1
+        assert findings[0].rule_id == "SCA-PIN-004"
+        assert findings[0].severity == Severity.MEDIUM
+        assert "without `--version`" in findings[0].description
+
+    def test_fires_on_helm_upgrade_no_version(self):
+        findings = self._run("helm upgrade my-release bitnami/nginx")
+        assert len(findings) == 1
+        assert "without `--version`" in findings[0].description
+
+    def test_fires_on_helm_install_version_latest(self):
+        findings = self._run("helm install nginx bitnami/nginx --version latest")
+        assert len(findings) == 1
+        assert "mutable version" in findings[0].description.lower()
+
+    def test_fires_on_helm_install_version_equals_latest(self):
+        findings = self._run("helm install nginx bitnami/nginx --version=latest")
+        assert len(findings) == 1
+
+    def test_fires_on_helm_pull_without_version(self):
+        findings = self._run("helm pull bitnami/nginx")
+        assert len(findings) == 1
+
+    def test_silent_on_helm_install_pinned_semver(self):
+        assert self._run("helm install nginx bitnami/nginx --version 13.2.34") == []
+
+    def test_silent_on_helm_template(self):
+        # `helm template` renders chart YAML; no install, version pinning irrelevant.
+        assert self._run("helm template my-release ./local-chart") == []
+
+    def test_silent_on_helm_upgrade_reuse_values(self):
+        # `--reuse-values` legitimately keeps the previously-installed chart version.
+        assert self._run("helm upgrade my-release bitnami/nginx --reuse-values") == []
+
+    def test_silent_on_unrelated_script(self):
+        assert self._run(
+            "echo helping with the deploy",
+            "kubectl get pods",
+            "make build",
+        ) == []
+
+    def test_multiple_findings_one_per_helm_call(self):
+        findings = self._run(
+            "helm install a bitnami/nginx",
+            "helm install b bitnami/redis --version latest",
+        )
+        assert len(findings) == 2
+
+    def test_evidence_truncated_to_safe_size(self):
+        long_line = "helm install nginx bitnami/nginx " + "--set foo=bar " * 100
+        findings = self._run(long_line)
+        assert len(findings) == 1
+        assert len(findings[0].evidence) <= 200
+
+
+class TestScaPin004GitHubActions:
+    def setup_method(self):
+        import tempfile
+        self._eol_tmp = Path(tempfile.mkdtemp(prefix="ciguard-pin004-gha-"))
+        self._osv_tmp = Path(tempfile.mkdtemp(prefix="ciguard-pin004-gha-osv-"))
+
+    def test_fires_on_run_step(self):
+        wf = Workflow(
+            name="ci",
+            jobs=[WfJob(
+                id="deploy",
+                steps=[Step(run="helm install nginx bitnami/nginx")],
+            )],
+        )
+        findings = rule_sca_pin_004(
+            wf, _offline_eol(self._eol_tmp), _offline_osv(self._osv_tmp),
+        )
+        assert len(findings) == 1
+        assert findings[0].location.startswith("jobs.deploy")
+
+
+class TestScaPin004Jenkins:
+    def setup_method(self):
+        import tempfile
+        self._eol_tmp = Path(tempfile.mkdtemp(prefix="ciguard-pin004-jkn-"))
+        self._osv_tmp = Path(tempfile.mkdtemp(prefix="ciguard-pin004-jkn-osv-"))
+
+    def test_fires_on_sh_step(self):
+        jf = Jenkinsfile(
+            style="declarative",
+            stages=[Stage(
+                name="deploy",
+                steps=[JkStep(kind="sh", script="helm install nginx bitnami/nginx")],
+            )],
+        )
+        findings = rule_sca_pin_004(
+            jf, _offline_eol(self._eol_tmp), _offline_osv(self._osv_tmp),
+        )
+        assert len(findings) == 1
+        assert findings[0].location.startswith("stage[deploy]")
