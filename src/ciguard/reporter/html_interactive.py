@@ -1333,7 +1333,9 @@ _VIEWER_JS = r"""
     if (!file) return;
     file.text().then(text => {
       // Extract the ciguard-data JSON blob from the HTML. Match the
-      // start tag and the closing </script>.
+      // open + close script tags. NB: don't write the literal close tag
+      // string in this comment or in source, it would terminate the
+      // inline script tag we're embedded inside.
       const m = text.match(/<script id="ciguard-data" type="application\/json">([\s\S]*?)<\/script>/);
       if (!m) {
         alert('That file does not contain a ciguard-data blob.');
@@ -1468,6 +1470,18 @@ _VIEWER_JS = r"""
 """
 
 
+def _escape_close_tag(js: str) -> str:
+    """Replace any literal `</script>` in JS source with the escaped form
+    so it can't terminate the inline `<script>` tag we embed it inside.
+
+    Hit by Phase 1.4 — a comment in viewer JS contained an unescaped
+    close-tag, breaking the embedded script silently. Defensive belt-
+    and-braces so a future edit can't do the same."""
+    # Case-insensitive: HTML parsers don't care about case on close tags.
+    import re as _re
+    return _re.sub(r"<(/script\s*>)", r"<\\\1", js, flags=_re.IGNORECASE)
+
+
 def render(report: Report) -> str:
     """Build the self-contained HTML document."""
     data = _to_visual_data(report)
@@ -1586,8 +1600,8 @@ def render(report: Report) -> str:
     <span class="legend-item" style="color:#71717a">scanned {_html_escape(meta['scan_timestamp'])}</span>
   </footer>
   <script id="ciguard-data" type="application/json">{data_json}</script>
-  <script>{d3_js}</script>
-  <script>{_VIEWER_JS}</script>
+  <script>{_escape_close_tag(d3_js)}</script>
+  <script>{_escape_close_tag(_VIEWER_JS)}</script>
 </body>
 </html>
 """

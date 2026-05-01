@@ -527,6 +527,30 @@ def test_aria_live_region_on_diff_banner() -> None:
     assert 'aria-live="polite"' in out
 
 
+def test_no_unescaped_close_script_inside_inline_scripts() -> None:
+    """Regression for the Phase 1.4 bug: a comment in the viewer JS
+    contained the literal `</script>` string, which the HTML parser
+    treated as the close tag for the surrounding inline script,
+    silently breaking the page.
+
+    The defensive escape at render time replaces any literal close tag
+    inside `<script>...</script>` blocks. This test asserts the only
+    `</script>` occurrences in the rendered output are the ACTUAL close
+    tags, not stray ones inside script bodies."""
+    out = html_interactive.render(_basic_report(jobs=[Job(name="build")]))
+    # Every occurrence of `</script>` must be at a tag-boundary position.
+    # Test by stripping all properly-paired script blocks and asserting
+    # nothing's left over.
+    stripped = re.sub(
+        r"<script[^>]*>[\s\S]*?</script>", "", out,
+        flags=re.IGNORECASE,
+    )
+    assert "</script>" not in stripped, (
+        "stray </script> outside a script-block boundary indicates "
+        "the inline JS may have terminated its container script early"
+    )
+
+
 # ===========================================================================
 # write_report file-system entry point
 # ===========================================================================
