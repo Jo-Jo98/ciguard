@@ -191,6 +191,32 @@ export CIGUARD_MCP_DISABLED=1
 
 When set to `1` / `true` / `yes` / `on` (case-insensitive), `ciguard mcp` exits with a clear policy message and a non-zero exit code before starting the server. Push via MDM (Jamf / Intune), `/etc/environment`, Group Policy, or shell profile to enforce fleet-wide. Unset or any other value → MCP runs normally.
 
+### What ciguard MCP can see (`CIGUARD_MCP_REDACT_LEVEL`)
+
+Every MCP response passes through a redaction layer before reaching the AI client. Three levels — set `CIGUARD_MCP_REDACT_LEVEL` to choose:
+
+| Level | Default? | What the LLM sees |
+|---|---|---|
+| `full` | ✅ | absolute paths → basename only; finding `evidence` → 8-char SHA-256 fingerprint (`redacted:abc12345`); 256 KB response cap |
+| `partial` | | paths relative to `CIGUARD_MCP_ROOT` (or basename); evidence preserved; 1 MB cap |
+| `raw` | | passthrough; 10 MB safety cap |
+
+The fingerprint is stable — the same evidence string always hashes to the same value, so an LLM agent can still de-dupe and reference findings without ever seeing the underlying string. Unknown / typo'd values fall back to `full` (fail-safe).
+
+**Per-tool data exposure (at default `full`):**
+
+| Tool | What it returns at `full` (default) | What `raw` adds |
+|---|---|---|
+| `ciguard.scan` | per-finding rule_id / severity / category / location + fingerprinted evidence; pipeline_name as basename | full evidence strings + absolute paths |
+| `ciguard.scan_repo` | per-file score + finding counts; aggregate severity totals; paths as basenames | per-file absolute paths + full per-finding evidence |
+| `ciguard.explain_rule` | rule metadata only — no repo data crosses the boundary | (same — no extra surface) |
+| `ciguard.diff_baseline` | new/resolved finding lists with fingerprinted evidence; basename paths | full evidence + absolute file/baseline paths |
+| `ciguard.list_rules` | rule catalog only — no repo data | (same) |
+
+**Audit trail:** every MCP invocation appends one JSONL record at `~/.ciguard/mcp-audit.jsonl` (override with `CIGUARD_MCP_AUDIT_PATH`, disable with `CIGUARD_MCP_AUDIT_DISABLED=1`). Each record carries `{ts, tool, redact_level, args, response_bytes, had_error}`. The `args` object is redaction-aware — what the audit log captures matches what the response leaked, no more. `tail -f ~/.ciguard/mcp-audit.jsonl` shows the AI agent's tool calls in real time during incident response.
+
+**Workspace allowlist (`CIGUARD_MCP_ROOT`):** when set, every tool that takes a path argument refuses paths outside the allowlist. Defence-in-depth on the path-traversal class. Stays optional — local-dev usage works without it.
+
 ## Suppressing findings (`.ciguardignore`)
 
 Drop a `.ciguardignore` YAML file at your repo root to suppress findings that you've reviewed and accepted. Every entry **must** include a written `reason` — naked rule-id-only disables are rejected by design (auditors need to know *why*).

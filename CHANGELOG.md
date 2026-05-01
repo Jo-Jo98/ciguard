@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Slice 15 (MCP hardening)
+
+- **`CIGUARD_MCP_REDACT_LEVEL=full|partial|raw` env var, default `full`.** Every MCP tool response now passes through a per-level redaction layer in `src/ciguard/mcp/redaction.py` before reaching the LLM client. At `full` (default), every finding's `evidence` field is replaced by a stable 8-char SHA-256 fingerprint (`redacted:abc12345`) — LLM still gets actionable rule_id + severity + location + remediation, but the underlying string never crosses the boundary. Absolute paths (`pipeline_name`, `file_path`, `baseline_path`, etc.) collapse to basenames. Response capped at 256 KB. `partial` keeps evidence + rewrites paths relative to `CIGUARD_MCP_ROOT` (1 MB cap). `raw` is full passthrough (10 MB safety cap). Unknown / typo'd values fall back to `full` — fail-safe.
+- **MCP audit log at `~/.ciguard/mcp-audit.jsonl`.** Every invocation appends one JSONL record `{ts, tool, redact_level, args, response_bytes, had_error}`. The `args` object is redaction-aware — what the audit log captures matches what the response leaked, no more. Path overridable via `CIGUARD_MCP_AUDIT_PATH`; opt-out via `CIGUARD_MCP_AUDIT_DISABLED=1` (mirrors the `CIGUARD_MCP_DISABLED` truthy convention). Audit failures never poison the response — best-effort with stderr-only error logging.
+- **README "What ciguard MCP can see" section** — explicit per-tool exposure table at every redaction level. The disclosure table is the user-facing contract; if a future tool is added, this table is the first thing that updates.
+- **Threat model Surface 10 (MCP-mediated data exfiltration)** added to `Project ciguard/THREAT_MODEL.md` with 7 STRIDE rows + DREAD scoring + new trust-boundary edges. Three CYCLE-1.5 self-pentest PoC checks lined up: default-level resolution, level-cannot-be-downgraded-by-tool-arg, audit-log written even on mid-response crash.
+- **`tests/conftest.py`** — autouse fixture redirects MCP audit log to a per-test tempfile so test runs don't accumulate records in `~/.ciguard/`.
+
 ### Added — Slice 14c (pin-discipline rule emitters)
 
 - **`SCA-PIN-002` — Image Uses Mutable Tag** (High). Cross-platform supply-chain rule. Fires for image references using a mutable tag name (`:latest`, `:stable`, `:edge`, `:prod`, `:production`, `:main`, `:master`, `:dev`, `:development`, `:nightly`) or no tag at all (Docker resolves bare names to `:latest`). Severity High by default — this is the OWASP CICD-SEC-3 / tj-actions-changed-files-style attack surface. Standards mapping: SLSA Level 2+, NIST SSDF PW.4.1, CIS Docker 4.7. Intentionally overlaps with the per-platform `PIPE-001` / `GHA-PIPE-001` / `JKN-PIPE-001` `:latest` checks — same surface, two perspectives (platform-rule + cross-platform supply-chain). Operators who find the duplicate noisy can `.ciguardignore` either side.

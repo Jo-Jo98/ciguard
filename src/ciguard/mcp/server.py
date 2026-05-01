@@ -1,5 +1,5 @@
 """
-ciguard MCP server (v0.8.0).
+ciguard MCP server (v0.8.0; Slice 15 hardening 2026-05-02).
 
 Exposes five tools over the Model Context Protocol stdio transport:
 
@@ -60,6 +60,7 @@ from ..parser.github_actions import GitHubActionsParser, detect_format
 from ..parser.gitlab_parser import GitLabCIParser
 from ..parser.jenkinsfile import JenkinsfileParser, looks_like_jenkinsfile
 from ..rule_catalog import get_catalog
+from . import audit_log, redaction
 
 
 SERVER_NAME = "ciguard"
@@ -488,14 +489,37 @@ def _all_tools() -> List["Tool"]:
 
 
 def _dispatch(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Single seam for every tool invocation. Handles the dispatch table
+    lookup, the actual call, the Slice 15 redaction layer, and the audit
+    log. Errors from the tool body land in the response as `{"error": ...}`
+    so the LLM client can recover; uncaught exceptions are caught here so
+    the MCP server can never crash on a single bad call.
+
+    Order matters: redact BEFORE measuring response size (the cap applies
+    to the redacted payload, not the raw one), and record the audit event
+    BEFORE returning so a process crash mid-response still leaves a trail.
+    """
+    level = redaction.resolve_level()
     entry = _TOOL_REGISTRY.get(name)
     if entry is None:
-        return {"error": f"Unknown tool: {name}"}
-    handler, _schema = entry
-    try:
-        return handler(args)
-    except Exception as exc:
-        return {"error": f"{name} raised: {type(exc).__name__}: {exc}"}
+        raw_response: Dict[str, Any] = {"error": f"Unknown tool: {name}"}
+    else:
+        handler, _schema = entry
+        try:
+            raw_response = handler(args)
+        except Exception as exc:
+            raw_response = {"error": f"{name} raised: {type(exc).__name__}: {exc}"}
+
+    redacted = redaction.redact(raw_response, level=level)
+    encoded_len = len(json.dumps(redacted, default=str))
+    audit_log.write_event(audit_log.make_event(
+        tool=name,
+        args_summary=redaction.args_summary(name, args, level),
+        redact_level=level,
+        response_bytes=encoded_len,
+        had_error=isinstance(raw_response, dict) and "error" in raw_response,
+    ))
+    return redacted
 
 
 # ---------------------------------------------------------------------------
