@@ -5,6 +5,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Slice 14b (infrastructure inventory — first 3 probes)
+
+- **`ciguard inventory` CLI verb** — live admin-API audit of CI/CD tooling, distinct from the pipeline-file scanning the rest of ciguard does. Reads operator-supplied env vars, calls each tool's admin API for version + edition, cross-references with endoflife.date for EOL/EOS warnings.
+- **Three priority probes shipped:**
+  - **Jenkins** (`/api/json`) — `CIGUARD_JENKINS_URL` + `_USER` + `_TOKEN`. HTTP Basic auth.
+  - **GitLab self-host** (`/api/v4/version`) — `CIGUARD_GITLAB_URL` + `_TOKEN`. `PRIVATE-TOKEN` header. Distinguishes CE vs EE.
+  - **GitHub Enterprise** (`/api/v3/meta`) — `CIGUARD_GHE_URL` + `_TOKEN`. Bearer `token` auth.
+- **Probe protocol** in `src/ciguard/inventory/probes.py` — `Probe` Protocol + `InventoryRunner` orchestrator + `register()` decorator + shared `http_get_json()` HTTP helper (8s timeout, 5 MB response cap, clear error messages on 401 / 404 / non-JSON / oversize).
+- **Auth model** — strict env-var gate. Missing vars → `configured=False`, no network call, silent skip. Configured probe with API failure → `error` field populated, runner never crashes.
+- **EOL enrichment** — `enrich_with_eol()` looks up each tool's version against endoflife.date (`jenkins`, `gitlab`, `github-enterprise-server` slugs). Falls back to major.minor matching when patch versions don't have their own cycle entry. Reuses the existing `~/.ciguard/cache/` directory and `--offline` flag.
+- **Output formats** — coloured text table by default (`tool`, `version`, `edition`, `status`, `notes`), `--format json` for the full `InventoryReport` model, `--output PATH` to write to file (ANSI codes stripped on file write). `--fail-on {none,approaching-eol,end-of-support,end-of-life,error}` exit-code gate for CI use.
+- **Status taxonomy** — five states: `unconfigured` / `ok` / `approaching-eol` (≤180 days) / `end-of-support` / `end-of-life` / `error`. Single source of truth in `InventoryEntry.status`.
+- **README "Infrastructure inventory" section** + Network egress table updated to include the operator-supplied admin-API destinations.
+- **Test count: 743 → 777 (+34)** — per-probe happy-path + error-mode tests, runner orchestration tests, EOL enrichment tests, registry drift guard, HTTP helper micro-tests covering the size cap + auth header + 401 messaging.
+
+### Deferred to a follow-up Slice 14b session
+
+- **Five remaining probes** — Nexus (`/service/rest/v1/status`), JFrog Artifactory (`/api/system/version`), SonarQube (`/api/server/version`), ArgoCD (`/api/version`), Harbor (`/api/v2.0/systeminfo`). Mechanical follow-on work matching the pattern of the three priority probes.
+- **HTML inventory report** — adding the inventory table as a section in the html-interactive reporter so the visualiser carries infra inventory alongside pipeline detail. Currently `ciguard inventory` is text/JSON only.
+- **Plugin inventory** for Jenkins (`/pluginManager/api/json?depth=1`) — needs `Overall/Administer` permission; opt-in flag rather than default.
+
 ### Added — Slice 15 (MCP hardening)
 
 - **`CIGUARD_MCP_REDACT_LEVEL=full|partial|raw` env var, default `full`.** Every MCP tool response now passes through a per-level redaction layer in `src/ciguard/mcp/redaction.py` before reaching the LLM client. At `full` (default), every finding's `evidence` field is replaced by a stable 8-char SHA-256 fingerprint (`redacted:abc12345`) — LLM still gets actionable rule_id + severity + location + remediation, but the underlying string never crosses the boundary. Absolute paths (`pipeline_name`, `file_path`, `baseline_path`, etc.) collapse to basenames. Response capped at 256 KB. `partial` keeps evidence + rewrites paths relative to `CIGUARD_MCP_ROOT` (1 MB cap). `raw` is full passthrough (10 MB safety cap). Unknown / typo'd values fall back to `full` — fail-safe.

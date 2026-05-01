@@ -568,6 +568,111 @@ def _write_repo_scan_output(output_path: str, result: dict) -> None:
     Path(output_path).write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
 
 
+# ---------------------------------------------------------------------------
+# `inventory` subcommand (Slice 14b)
+# ---------------------------------------------------------------------------
+
+# Status → exit-code-severity rank. Used by `--fail-on` to decide whether
+# a particular entry crosses the user's threshold.
+_INVENTORY_STATUS_RANK = {
+    "ok":               0,
+    "unconfigured":     0,
+    "approaching-eol":  1,
+    "end-of-support":   2,
+    "end-of-life":      3,
+    "error":            4,
+}
+
+_INVENTORY_STATUS_COLOUR = {
+    "ok":               _GREEN,
+    "approaching-eol":  _YELLOW,
+    "end-of-support":   _YELLOW,
+    "end-of-life":      _RED,
+    "error":            _RED,
+    "unconfigured":     _DIM,
+}
+
+
+def cmd_inventory(args: argparse.Namespace) -> int:
+    """Run the live infra-inventory audit. Prints a coloured table to
+    stdout (or `--output`) by default; `--format json` emits the full
+    InventoryReport for downstream tooling. `--fail-on` gates the exit
+    code on the worst-status entry."""
+    from ciguard.inventory import InventoryRunner
+
+    runner = InventoryRunner(eol_offline=args.offline)
+    report = runner.run()
+
+    if args.format == "json":
+        import json as _json
+        payload = _json.dumps(report.model_dump(mode="json"), indent=2, default=str)
+        if args.output and args.output != "-":
+            Path(args.output).write_text(payload + "\n", encoding="utf-8")
+        else:
+            print(payload)
+    else:
+        _print_inventory_table(report, output_path=args.output)
+
+    threshold = _INVENTORY_STATUS_RANK[args.fail_on] if args.fail_on != "none" else None
+    if threshold is None:
+        return 0
+    worst = max(
+        (_INVENTORY_STATUS_RANK[e.status] for e in report.entries),
+        default=0,
+    )
+    return 1 if worst >= threshold else 0
+
+
+def _print_inventory_table(report, *, output_path: Optional[str]) -> None:
+    """Render a compact text table — one row per known probe."""
+    lines: list[str] = []
+    lines.append(f"{_BOLD}ciguard inventory{_RESET} — {report.scan_timestamp}")
+    lines.append(
+        f"  {report.configured_count} of {len(report.entries)} tools configured"
+    )
+    lines.append("")
+    header = f"  {'TOOL':<22} {'VERSION':<12} {'EDITION':<8} {'STATUS':<18} NOTES"
+    lines.append(_BOLD + header + _RESET)
+    lines.append("  " + "-" * (len(header) - 2))
+    for e in report.entries:
+        status_colour = _INVENTORY_STATUS_COLOUR.get(e.status, "")
+        status_field = f"{status_colour}{e.status}{_RESET}"
+        notes_bits: list[str] = []
+        if e.eol_date:
+            d = e.days_until_eol
+            if d is not None:
+                notes_bits.append(
+                    f"EOL {e.eol_date} ({d} days)" if d >= 0
+                    else f"EOL {e.eol_date} ({abs(d)} days past)"
+                )
+            else:
+                notes_bits.append(f"EOL {e.eol_date}")
+        if e.eos_date:
+            notes_bits.append(f"EOS {e.eos_date}")
+        if e.error:
+            notes_bits.append(e.error)
+        for n in e.notes:
+            notes_bits.append(n)
+        notes_str = "; ".join(notes_bits)
+        # Note: ANSI codes inflate len() so the column padding doesn't
+        # line up perfectly when the status is coloured. Acceptable —
+        # the `json` format is the machine-readable contract; this is
+        # for human eyeballs in a terminal where colour matters more
+        # than pixel-perfect alignment.
+        lines.append(
+            f"  {e.tool:<22} {(e.version or '-'):<12} "
+            f"{(e.edition or '-'):<8} {status_field:<27} {notes_str}"
+        )
+    output = "\n".join(lines) + "\n"
+    if output_path and output_path != "-":
+        # Write without ANSI codes — file output should be plain.
+        import re as _re
+        plain = _re.sub(r"\033\[[0-9;]*m", "", output)
+        Path(output_path).write_text(plain, encoding="utf-8")
+    else:
+        print(output, end="")
+
+
 def _print_terminal_report(report) -> None:
     import textwrap
 
@@ -862,6 +967,40 @@ def main() -> int:
         help="Pipeline platform. `auto` (default) inspects the file to decide.",
     )
 
+    # ---- `inventory` subcommand (Slice 14b): live admin-API audit of CI/CD
+    # tooling (Jenkins / GitLab self-host / GitHub Enterprise / ...).
+    # Each probe reads its own CIGUARD_<TOOL>_* env vars; missing vars =
+    # silent skip (probe reports `unconfigured`). Cross-references with
+    # endoflife.date for EOL/EOS warnings.
+    inventory_parser = subparsers.add_parser(
+        "inventory",
+        help="Audit live CI/CD infrastructure (Jenkins, GitLab self-host, "
+             "GitHub Enterprise, ...) for version + EOL status. Reads "
+             "credentials from CIGUARD_<TOOL>_URL/USER/TOKEN env vars; "
+             "unconfigured tools are silently skipped.",
+    )
+    inventory_parser.add_argument(
+        "--format", "-f", default="text",
+        choices=["text", "json"],
+        help="Output format. `text` (default) prints a coloured table; "
+             "`json` emits the full InventoryReport for downstream tooling.",
+    )
+    inventory_parser.add_argument(
+        "--output", "-o", default=None,
+        help="Where to write the report. `-` (default) writes to stdout.",
+    )
+    inventory_parser.add_argument(
+        "--offline", action="store_true",
+        help="Skip endoflife.date lookups. Probes still call admin APIs; "
+             "EOL columns will be blank.",
+    )
+    inventory_parser.add_argument(
+        "--fail-on", default="none",
+        choices=["none", "approaching-eol", "end-of-support", "end-of-life", "error"],
+        help="Exit with non-zero status when any entry's status meets or "
+             "exceeds this severity. Default `none` (informational).",
+    )
+
     args = parser.parse_args()
 
     if args.command == "scan":
@@ -989,6 +1128,8 @@ def main() -> int:
         app = _create_app()
         uvicorn.run(app, host=args.host, port=args.port, log_level="info")
         return 0
+    elif args.command == "inventory":
+        return cmd_inventory(args)
     else:
         parser.print_help()
         return 0

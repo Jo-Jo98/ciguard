@@ -311,6 +311,39 @@ Notable in-code defences:
 - PR-comment markdown sanitisation (4-backtick fences with backtick-run neutralisation; markdown specials escaped on inline values).
 - Per-installation storage namespace (`<storage_root>/<installation_id>/<owner>/<repo>/baseline.json`). Reads keyed only by `repo_full_name` raise `TypeError`. Path traversal in repo names rejected at validation; resolved-path-under-root assert as belt-and-braces.
 
+## Infrastructure inventory (`ciguard inventory`)
+
+Audits the *live tooling* a customer runs (Jenkins, GitLab self-host, GitHub Enterprise — more probes coming) for version + EOL status. Distinct from `scan` / `scan-repo`, which audit pipeline *files*.
+
+Each tool is opt-in: ciguard only contacts a tool when the operator provides URL + credentials via env vars. No discovery, no port-scanning.
+
+```bash
+export CIGUARD_JENKINS_URL=https://jenkins.example.com
+export CIGUARD_JENKINS_USER=audit-readonly
+export CIGUARD_JENKINS_TOKEN=<personal API token>
+
+export CIGUARD_GITLAB_URL=https://gitlab.example.com
+export CIGUARD_GITLAB_TOKEN=<personal access token, read_api scope>
+
+export CIGUARD_GHE_URL=https://github.example.com
+export CIGUARD_GHE_TOKEN=<personal access token>
+
+ciguard inventory                       # coloured text table
+ciguard inventory --format json         # machine-readable
+ciguard inventory --offline             # skip endoflife.date (cached only)
+ciguard inventory --fail-on end-of-life # CI gate
+```
+
+| Tool | Endpoint | Auth | Required env vars |
+|---|---|---|---|
+| Jenkins | `/api/json` | HTTP Basic (user + API token) | `CIGUARD_JENKINS_URL` + `_USER` + `_TOKEN` |
+| GitLab self-host | `/api/v4/version` | `PRIVATE-TOKEN` header | `CIGUARD_GITLAB_URL` + `_TOKEN` |
+| GitHub Enterprise | `/api/v3/meta` | `Authorization: token <PAT>` | `CIGUARD_GHE_URL` + `_TOKEN` |
+
+For each configured tool, ciguard reports the detected version + edition + EOL/EOS status (cross-referenced against endoflife.date — same `~/.ciguard/cache/` already used by SCA-EOL rules). Unconfigured tools appear in the report as `unconfigured` and don't generate any network traffic. Probe failures (auth, network, malformed response) land in the entry's `error` field — the runner never crashes on a single probe failure.
+
+Read-only credentials are recommended throughout. The Jenkins probe needs `Overall/Read` at minimum; GitLab probe needs `read_api`; GHE probe needs the default `repo` scope.
+
 ## Pre-commit hook
 
 Install ciguard into your `pre-commit` chain to scan pipeline files on every commit:
@@ -333,7 +366,8 @@ Every outbound network call ciguard can make, why it makes it, and how to disabl
 | Destination | When | Disable with |
 |---|---|---|
 | `api.osv.dev` | SCA CVE lookups for GitHub Actions / reusable workflows (rule `SCA-CVE-001`) | `--offline` |
-| `endoflife.date` | SCA EOL/EOS lookups for container base images + language runtimes (rules `SCA-EOL-001/002/003`, `SCA-EOS-001`) | `--offline` |
+| `endoflife.date` | SCA EOL/EOS lookups for container base images + language runtimes (rules `SCA-EOL-001/002/003`, `SCA-EOS-001`) AND infrastructure-inventory cycle lookups (`ciguard inventory`) | `--offline` |
+| Operator-supplied admin APIs (Jenkins / GitLab self-host / GHE) | `ciguard inventory` only, and only when `CIGUARD_<TOOL>_URL` + auth env vars are set. No discovery; strict env-var gate. | unset the env vars |
 | `api.anthropic.com` / `api.openai.com` | LLM enrichment (executive summary + remediation) — **opt-in only** | omit `--llm` (default) |
 | Semgrep registry, OpenSSF Scorecard | External scanner integrations — only run when their binaries are installed and present on PATH | `--no-scanners` (or `CIGUARD_NO_SCANNERS=1`) |
 
