@@ -20,11 +20,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **README "Infrastructure inventory" section** + Network egress table updated to include the operator-supplied admin-API destinations.
 - **Test count: 743 → 777 (+34)** — per-probe happy-path + error-mode tests, runner orchestration tests, EOL enrichment tests, registry drift guard, HTTP helper micro-tests covering the size cap + auth header + 401 messaging.
 
-### Deferred to a follow-up Slice 14b session
+### Added — Slice 14b session 2 (5 incremental probes + standalone HTML)
 
-- **Five remaining probes** — Nexus (`/service/rest/v1/status`), JFrog Artifactory (`/api/system/version`), SonarQube (`/api/server/version`), ArgoCD (`/api/version`), Harbor (`/api/v2.0/systeminfo`). Mechanical follow-on work matching the pattern of the three priority probes.
-- **HTML inventory report** — adding the inventory table as a section in the html-interactive reporter so the visualiser carries infra inventory alongside pipeline detail. Currently `ciguard inventory` is text/JSON only.
-- **Plugin inventory** for Jenkins (`/pluginManager/api/json?depth=1`) — needs `Overall/Administer` permission; opt-in flag rather than default.
+- **Five remaining probes shipped:**
+  - **Sonatype Nexus** (`/service/rest/v1/system/info`, falls back to `/status/check` on 403) — `CIGUARD_NEXUS_URL` + `_USER` + `_PASSWORD`. HTTP Basic. Surfaces `edition` (PRO/OSS) when available.
+  - **JFrog Artifactory** (`/api/system/version`, auto-prefixes `/artifactory/` when missing) — `CIGUARD_ARTIFACTORY_URL` + (`_TOKEN` for 7.x **OR** `_USER` + `_PASSWORD` for 6.x). Surfaces `license` as `edition`.
+  - **SonarQube** (`/api/server/version`, plain-text response) — `CIGUARD_SONAR_URL` + `_TOKEN`. HTTP Basic with token-as-username (SonarQube convention).
+  - **ArgoCD** (`/api/version`) — `CIGUARD_ARGOCD_URL` + `_TOKEN`. Bearer JWT. Strips leading `v` from version (`v2.10.4` → `2.10.4`) so endoflife matching works.
+  - **Harbor** (`/api/v2.0/systeminfo`) — `CIGUARD_HARBOR_URL` + `_USER` + `_PASSWORD`. HTTP Basic. Strips `v` prefix AND build hash (`v2.10.1-abc1234` → `2.10.1`).
+- **Standalone HTML inventory** — new `ciguard inventory --format html` writes a self-contained dark-mode page with the same visual vocabulary as the pipeline visualiser (chip-style status badges, severity colours, print-friendly via `@media print`). Right shape for the "email this to a client" deliverable. Implementation in new `src/ciguard/reporter/inventory_html.py` — pure function, no JavaScript, no dependencies.
+- **Test count: 777 → 805 (+28)** — 17 new probe tests + 11 HTML reporter tests (drift-guard for all 8 probes registering rolled into the existing TestProbeRegistry class).
+- **Bug fix during the slice:** Artifactory probe's URL path-detection (`"/artifactory" in base`) wrongly matched `https://artifactory.example` because the `//` substring satisfied the leading `/`. Replaced with a proper `urlsplit().path` check.
+
+### Deferred — `Project ciguard/PROJECT-STATE.md` for current scope
+
+- Plugin inventory for Jenkins (`/pluginManager/api/json?depth=1`) — needs `Overall/Administer` permission; opt-in flag rather than default. Not a blocker for the audit deliverable.
 
 ### Added — Slice 15 (MCP hardening)
 

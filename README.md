@@ -328,10 +328,11 @@ export CIGUARD_GITLAB_TOKEN=<personal access token, read_api scope>
 export CIGUARD_GHE_URL=https://github.example.com
 export CIGUARD_GHE_TOKEN=<personal access token>
 
-ciguard inventory                       # coloured text table
-ciguard inventory --format json         # machine-readable
-ciguard inventory --offline             # skip endoflife.date (cached only)
-ciguard inventory --fail-on end-of-life # CI gate
+ciguard inventory                                      # coloured text table
+ciguard inventory --format json                        # machine-readable
+ciguard inventory --format html --output infra.html    # standalone audit deliverable
+ciguard inventory --offline                            # skip endoflife.date (cached only)
+ciguard inventory --fail-on end-of-life                # CI gate
 ```
 
 | Tool | Endpoint | Auth | Required env vars |
@@ -339,6 +340,11 @@ ciguard inventory --fail-on end-of-life # CI gate
 | Jenkins | `/api/json` | HTTP Basic (user + API token) | `CIGUARD_JENKINS_URL` + `_USER` + `_TOKEN` |
 | GitLab self-host | `/api/v4/version` | `PRIVATE-TOKEN` header | `CIGUARD_GITLAB_URL` + `_TOKEN` |
 | GitHub Enterprise | `/api/v3/meta` | `Authorization: token <PAT>` | `CIGUARD_GHE_URL` + `_TOKEN` |
+| Sonatype Nexus | `/service/rest/v1/system/info` (falls back to `/status/check` on 403) | HTTP Basic | `CIGUARD_NEXUS_URL` + `_USER` + `_PASSWORD` |
+| JFrog Artifactory | `/api/system/version` (auto-prefixes `/artifactory/` when missing) | bearer token (7.x) OR HTTP Basic (6.x) | `CIGUARD_ARTIFACTORY_URL` + `_TOKEN` OR (`_USER` + `_PASSWORD`) |
+| SonarQube | `/api/server/version` (returns plain text) | HTTP Basic, token-as-username | `CIGUARD_SONAR_URL` + `_TOKEN` |
+| ArgoCD | `/api/version` | `Authorization: Bearer <JWT>` | `CIGUARD_ARGOCD_URL` + `_TOKEN` |
+| Harbor | `/api/v2.0/systeminfo` | HTTP Basic | `CIGUARD_HARBOR_URL` + `_USER` + `_PASSWORD` |
 
 For each configured tool, ciguard reports the detected version + edition + EOL/EOS status (cross-referenced against endoflife.date — same `~/.ciguard/cache/` already used by SCA-EOL rules). Unconfigured tools appear in the report as `unconfigured` and don't generate any network traffic. Probe failures (auth, network, malformed response) land in the entry's `error` field — the runner never crashes on a single probe failure.
 
@@ -367,7 +373,7 @@ Every outbound network call ciguard can make, why it makes it, and how to disabl
 |---|---|---|
 | `api.osv.dev` | SCA CVE lookups for GitHub Actions / reusable workflows (rule `SCA-CVE-001`) | `--offline` |
 | `endoflife.date` | SCA EOL/EOS lookups for container base images + language runtimes (rules `SCA-EOL-001/002/003`, `SCA-EOS-001`) AND infrastructure-inventory cycle lookups (`ciguard inventory`) | `--offline` |
-| Operator-supplied admin APIs (Jenkins / GitLab self-host / GHE) | `ciguard inventory` only, and only when `CIGUARD_<TOOL>_URL` + auth env vars are set. No discovery; strict env-var gate. | unset the env vars |
+| Operator-supplied admin APIs (Jenkins, GitLab self-host, GHE, Nexus, JFrog Artifactory, SonarQube, ArgoCD, Harbor) | `ciguard inventory` only, and only when `CIGUARD_<TOOL>_URL` + auth env vars are set. No discovery; strict env-var gate. | unset the env vars |
 | `api.anthropic.com` / `api.openai.com` | LLM enrichment (executive summary + remediation) — **opt-in only** | omit `--llm` (default) |
 | Semgrep registry, OpenSSF Scorecard | External scanner integrations — only run when their binaries are installed and present on PATH | `--no-scanners` (or `CIGUARD_NO_SCANNERS=1`) |
 

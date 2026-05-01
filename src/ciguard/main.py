@@ -610,6 +610,13 @@ def cmd_inventory(args: argparse.Namespace) -> int:
             Path(args.output).write_text(payload + "\n", encoding="utf-8")
         else:
             print(payload)
+    elif args.format == "html":
+        from ciguard.reporter import inventory_html
+        if args.output and args.output != "-":
+            inventory_html.write_report(report, Path(args.output))
+            print(f"Inventory HTML written to {args.output}")
+        else:
+            print(inventory_html.render(report), end="")
     else:
         _print_inventory_table(report, output_path=args.output)
 
@@ -981,9 +988,11 @@ def main() -> int:
     )
     inventory_parser.add_argument(
         "--format", "-f", default="text",
-        choices=["text", "json"],
+        choices=["text", "json", "html"],
         help="Output format. `text` (default) prints a coloured table; "
-             "`json` emits the full InventoryReport for downstream tooling.",
+             "`json` emits the full InventoryReport for downstream tooling; "
+             "`html` writes a self-contained dark-theme inventory page "
+             "suitable as an audit deliverable.",
     )
     inventory_parser.add_argument(
         "--output", "-o", default=None,

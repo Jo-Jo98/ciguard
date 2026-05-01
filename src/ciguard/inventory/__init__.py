@@ -36,6 +36,11 @@ from .probes import (
 from . import jenkins as _jenkins  # noqa: F401
 from . import gitlab as _gitlab  # noqa: F401
 from . import github_enterprise as _github_enterprise  # noqa: F401
+from . import nexus as _nexus  # noqa: F401
+from . import artifactory as _artifactory  # noqa: F401
+from . import sonarqube as _sonarqube  # noqa: F401
+from . import argocd as _argocd  # noqa: F401
+from . import harbor as _harbor  # noqa: F401
 
 __all__ = [
     "ALL_PROBES",

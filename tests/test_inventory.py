@@ -22,10 +22,16 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from ciguard.inventory import ALL_PROBES, InventoryRunner, ProbeError
+from ciguard.inventory.argocd import ArgoCDProbe
+from ciguard.inventory.artifactory import ArtifactoryProbe
 from ciguard.inventory.gitlab import GitLabSelfHostProbe
 from ciguard.inventory.github_enterprise import GitHubEnterpriseProbe
+from ciguard.inventory.harbor import HarborProbe
 from ciguard.inventory.jenkins import JenkinsProbe
+from ciguard.inventory.nexus import NexusProbe
+from ciguard.inventory.sonarqube import SonarQubeProbe
 from ciguard.inventory import probes as probes_mod
+from ciguard.inventory import sonarqube as sonarqube_mod
 from ciguard.models.inventory import InventoryEntry, InventoryReport
 
 
@@ -395,3 +401,202 @@ class TestProbeRegistry:
         for p in ALL_PROBES:
             # Attribute must exist even when None — runner reads it.
             assert hasattr(p, "endoflife_product")
+
+    def test_all_eight_probes_registered(self):
+        names = {p.tool for p in ALL_PROBES}
+        expected = {
+            "jenkins", "gitlab-self-host", "github-enterprise",
+            "nexus", "artifactory", "sonarqube", "argocd", "harbor",
+        }
+        assert names == expected, f"missing or extra probes: {names ^ expected}"
+
+
+# ---------------------------------------------------------------------------
+# Per-probe tests — Slice 14b session 2 (5 incremental probes)
+# ---------------------------------------------------------------------------
+
+ENV_NEXUS = {
+    "CIGUARD_NEXUS_URL":      "https://nexus.example",
+    "CIGUARD_NEXUS_USER":     "audit",
+    "CIGUARD_NEXUS_PASSWORD": "pw",
+}
+
+ENV_ARTIFACTORY_TOKEN = {
+    "CIGUARD_ARTIFACTORY_URL":   "https://artifactory.example",
+    "CIGUARD_ARTIFACTORY_TOKEN": "tok",
+}
+
+ENV_ARTIFACTORY_BASIC = {
+    "CIGUARD_ARTIFACTORY_URL":      "https://artifactory.example",
+    "CIGUARD_ARTIFACTORY_USER":     "admin",
+    "CIGUARD_ARTIFACTORY_PASSWORD": "pw",
+}
+
+ENV_SONAR = {
+    "CIGUARD_SONAR_URL":   "https://sonar.example",
+    "CIGUARD_SONAR_TOKEN": "sqp_xxx",
+}
+
+ENV_ARGOCD = {
+    "CIGUARD_ARGOCD_URL":   "https://argocd.example",
+    "CIGUARD_ARGOCD_TOKEN": "ey...",
+}
+
+ENV_HARBOR = {
+    "CIGUARD_HARBOR_URL":      "https://harbor.example",
+    "CIGUARD_HARBOR_USER":     "robot$audit",
+    "CIGUARD_HARBOR_PASSWORD": "pw",
+}
+
+
+class TestNexusProbe:
+    def test_happy_path_via_system_info(self, monkeypatch):
+        _mock_urlopen(monkeypatch, 200,
+                      b'{"version": "3.66.0", "edition": "PRO"}')
+        entry = NexusProbe().probe(ENV_NEXUS)
+        assert entry.version == "3.66.0"
+        assert entry.edition == "PRO"
+        assert entry.tool == "nexus"
+
+    def test_falls_back_to_status_check_on_403(self, monkeypatch):
+        # First call returns 403 (no system-info-read), second returns the
+        # status/check payload with version nested inside `node.api`.
+        calls = {"n": 0}
+
+        def fake_urlopen(req, timeout=None):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                import urllib.error
+                raise urllib.error.HTTPError(
+                    url="x", code=403, msg="Forbidden", hdrs=None, fp=None,
+                )
+            return _FakeResp(200, b'{"node": {"api": {"nexus_version": "3.42.0"}}}')
+
+        monkeypatch.setattr(probes_mod.urllib.request, "urlopen", fake_urlopen)
+        entry = NexusProbe().probe(ENV_NEXUS)
+        assert entry.version == "3.42.0"
+
+    def test_unrecognised_response_errors_clearly(self, monkeypatch):
+        _mock_urlopen(monkeypatch, 200, b'{"unknown_field": true}')
+        with pytest.raises(ProbeError, match="recognisable version"):
+            NexusProbe().probe(ENV_NEXUS)
+
+
+class TestArtifactoryProbe:
+    def test_happy_path_token(self, monkeypatch):
+        captured = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["url"] = req.full_url
+            captured["headers"] = dict(req.headers)
+            return _FakeResp(200,
+                             b'{"version": "7.77.3", "license": "Enterprise"}')
+
+        monkeypatch.setattr(probes_mod.urllib.request, "urlopen", fake_urlopen)
+        entry = ArtifactoryProbe().probe(ENV_ARTIFACTORY_TOKEN)
+        assert entry.version == "7.77.3"
+        assert entry.edition == "Enterprise"
+        # Default URL should pick up the `/artifactory/` prefix.
+        assert "/artifactory/api/system/version" in captured["url"]
+        assert captured["headers"]["Authorization"] == "Bearer tok"
+
+    def test_basic_auth_path(self, monkeypatch):
+        _mock_urlopen(monkeypatch, 200, b'{"version": "6.23.21", "license": "Pro"}')
+        entry = ArtifactoryProbe().probe(ENV_ARTIFACTORY_BASIC)
+        assert entry.version == "6.23.21"
+
+    def test_missing_auth_errors(self):
+        env = {"CIGUARD_ARTIFACTORY_URL": "https://x.example"}
+        with pytest.raises(ProbeError, match="ARTIFACTORY_TOKEN"):
+            ArtifactoryProbe().probe(env)
+
+    def test_pre_prefixed_url_not_doubled(self, monkeypatch):
+        captured = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["url"] = req.full_url
+            return _FakeResp(200, b'{"version": "7.0.0", "license": "OSS"}')
+
+        monkeypatch.setattr(probes_mod.urllib.request, "urlopen", fake_urlopen)
+        env = dict(ENV_ARTIFACTORY_TOKEN,
+                   CIGUARD_ARTIFACTORY_URL="https://x.example/artifactory")
+        ArtifactoryProbe().probe(env)
+        assert captured["url"] == "https://x.example/artifactory/api/system/version"
+        assert captured["url"].count("/artifactory/") == 1
+
+
+class TestSonarQubeProbe:
+    def test_happy_path(self, monkeypatch):
+        # SonarQube returns plain text — our probe reads it directly without
+        # going through http_get_json. Patch the urlopen on the sonarqube
+        # module's namespace, which imports `urllib.request` at module top.
+        def fake_urlopen(req, timeout=None):
+            return _FakeResp(200, b"10.4.1.88267")
+
+        monkeypatch.setattr(sonarqube_mod.urllib.request, "urlopen", fake_urlopen)
+        entry = SonarQubeProbe().probe(ENV_SONAR)
+        assert entry.version == "10.4.1.88267"
+        assert entry.tool == "sonarqube"
+
+    def test_401_message_mentions_token(self, monkeypatch):
+        import urllib.error
+
+        def fake_urlopen(req, timeout=None):
+            raise urllib.error.HTTPError(
+                url="x", code=401, msg="Unauthorized", hdrs=None, fp=None,
+            )
+
+        monkeypatch.setattr(sonarqube_mod.urllib.request, "urlopen", fake_urlopen)
+        with pytest.raises(ProbeError, match="user token"):
+            SonarQubeProbe().probe(ENV_SONAR)
+
+    def test_empty_body_errors(self, monkeypatch):
+        def fake_urlopen(req, timeout=None):
+            return _FakeResp(200, b"")
+
+        monkeypatch.setattr(sonarqube_mod.urllib.request, "urlopen", fake_urlopen)
+        with pytest.raises(ProbeError, match="empty body"):
+            SonarQubeProbe().probe(ENV_SONAR)
+
+
+class TestArgoCDProbe:
+    def test_happy_path_capital_v(self, monkeypatch):
+        _mock_urlopen(monkeypatch, 200, b'{"Version": "v2.10.4+abc1234"}')
+        entry = ArgoCDProbe().probe(ENV_ARGOCD)
+        # Leading `v` stripped to match endoflife `cycle` format.
+        assert entry.version == "2.10.4+abc1234"
+
+    def test_happy_path_lowercase(self, monkeypatch):
+        _mock_urlopen(monkeypatch, 200, b'{"version": "2.11.0"}')
+        entry = ArgoCDProbe().probe(ENV_ARGOCD)
+        assert entry.version == "2.11.0"
+
+    def test_missing_version_errors(self, monkeypatch):
+        _mock_urlopen(monkeypatch, 200, b'{"BuildDate": "2026-01-01"}')
+        with pytest.raises(ProbeError, match="no `Version`"):
+            ArgoCDProbe().probe(ENV_ARGOCD)
+
+
+class TestHarborProbe:
+    def test_happy_path(self, monkeypatch):
+        _mock_urlopen(monkeypatch, 200,
+                      b'{"harbor_version": "v2.10.1-abc1234"}')
+        entry = HarborProbe().probe(ENV_HARBOR)
+        # Strips both `v` prefix and `-abc1234` build hash.
+        assert entry.version == "2.10.1"
+
+    def test_missing_version_errors(self, monkeypatch):
+        _mock_urlopen(monkeypatch, 200, b'{"auth_mode": "db_auth"}')
+        with pytest.raises(ProbeError, match="harbor_version"):
+            HarborProbe().probe(ENV_HARBOR)
+
+    def test_passes_basic_auth(self, monkeypatch):
+        captured = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["headers"] = dict(req.headers)
+            return _FakeResp(200, b'{"harbor_version": "v2.10.0"}')
+
+        monkeypatch.setattr(probes_mod.urllib.request, "urlopen", fake_urlopen)
+        HarborProbe().probe(ENV_HARBOR)
+        assert captured["headers"]["Authorization"].startswith("Basic ")
