@@ -527,6 +527,86 @@ def test_aria_live_region_on_diff_banner() -> None:
     assert 'aria-live="polite"' in out
 
 
+def test_findings_attach_to_job_via_sca_location_format() -> None:
+    """SCA rules emit `job[<name>].image` — must attach to that job."""
+    findings = [
+        _finding("SCA-EOL-001", Severity.CRITICAL, "job[approve-production].image"),
+        _finding("X-2", Severity.HIGH, "job[approve-production]"),  # bare bracket form
+    ]
+    jobs = [Job(name="approve-production"), Job(name="other")]
+    out = html_interactive.render(_basic_report(jobs=jobs, findings=findings))
+    data = _extract_json(out)
+    by_name = {j["name"]: j for j in data["jobs"]}
+    rule_ids = {f["rule_id"] for f in by_name["approve-production"]["findings"]}
+    assert "SCA-EOL-001" in rule_ids
+    assert "X-2" in rule_ids
+    assert by_name["other"]["findings"] == []
+
+
+def test_findings_attach_to_job_via_gha_jobs_dot_format() -> None:
+    """GHA rules emit `jobs.<id>.runs-on` — must attach to that job."""
+    findings = [
+        _finding("GHA-IAM-005", Severity.HIGH, "jobs.build.runs-on"),
+        _finding("GHA-IAM-006", Severity.MEDIUM, "jobs.build.steps[2]"),
+    ]
+    jobs = [Job(name="build"), Job(name="test")]
+    out = html_interactive.render(_basic_report(jobs=jobs, findings=findings))
+    data = _extract_json(out)
+    by_name = {j["name"]: j for j in data["jobs"]}
+    rule_ids = {f["rule_id"] for f in by_name["build"]["findings"]}
+    assert "GHA-IAM-005" in rule_ids
+    assert "GHA-IAM-006" in rule_ids
+
+
+def test_findings_attach_to_stage_via_jenkins_format() -> None:
+    """Jenkins rules emit `stage[<name>].steps`. Same matcher applies
+    (jobs and stages are visualised as nodes interchangeably)."""
+    findings = [_finding("JKN-RUN-001", Severity.MEDIUM, "stage[Test].steps.script")]
+    jobs = [Job(name="Test")]
+    out = html_interactive.render(_basic_report(jobs=jobs, findings=findings))
+    data = _extract_json(out)
+    assert {f["rule_id"] for f in data["jobs"][0]["findings"]} == {"JKN-RUN-001"}
+
+
+def test_humanised_location_reads_well() -> None:
+    """The display_location field is what shows up in the side-panel
+    list — should be readable, not cryptic."""
+    findings = [
+        _finding("X-1", Severity.HIGH, "job[deploy].image"),
+        _finding("X-2", Severity.HIGH, "global.variables"),
+        _finding("X-3", Severity.HIGH, "global"),
+        _finding("X-4", Severity.HIGH, "jobs.build.runs-on"),
+        _finding("X-5", Severity.HIGH, "stage[Test].steps.script"),
+        _finding("X-6", Severity.HIGH, "pipeline.image"),
+    ]
+    jobs = [Job(name="deploy"), Job(name="build"), Job(name="Test")]
+    out = html_interactive.render(_basic_report(jobs=jobs, findings=findings))
+    data = _extract_json(out)
+    by_rule = {f["rule_id"]: f for f in data["findings"]}
+    assert by_rule["X-1"]["display_location"] == "deploy · image"
+    assert by_rule["X-2"]["display_location"] == "Pipeline · variables"
+    assert by_rule["X-3"]["display_location"] == "Pipeline (global)"
+    assert by_rule["X-4"]["display_location"] == "build · runs-on"
+    assert by_rule["X-5"]["display_location"] == "Test · steps.script"
+    assert by_rule["X-6"]["display_location"] == "Pipeline · image"
+
+
+def test_findings_carry_owning_job_for_click_navigation() -> None:
+    """The side-panel click handler uses `owning_job` to find which job
+    to highlight. Locations that don't resolve to a job (global,
+    pipeline-level) get null."""
+    findings = [
+        _finding("X-1", Severity.HIGH, "job[deploy].image"),  # → "deploy"
+        _finding("X-2", Severity.HIGH, "global.variables"),    # → null
+    ]
+    jobs = [Job(name="deploy")]
+    out = html_interactive.render(_basic_report(jobs=jobs, findings=findings))
+    data = _extract_json(out)
+    by_rule = {f["rule_id"]: f for f in data["findings"]}
+    assert by_rule["X-1"]["owning_job"] == "deploy"
+    assert by_rule["X-2"]["owning_job"] is None
+
+
 def test_no_unescaped_close_script_inside_inline_scripts() -> None:
     """Regression for the Phase 1.4 bug: a comment in the viewer JS
     contained the literal `</script>` string, which the HTML parser

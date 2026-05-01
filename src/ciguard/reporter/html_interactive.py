@@ -33,6 +33,7 @@ The `service_identity` field below is reserved for that.
 from __future__ import annotations
 
 import json
+import re as _re
 from collections import defaultdict
 from importlib.resources import files
 from pathlib import Path
@@ -170,17 +171,94 @@ def _job_dependencies(job: Job) -> List[str]:
     return out
 
 
-def _findings_for_location(report: Report, location: str) -> List[Finding]:
-    """Match findings whose `location` references a given job name.
+# Patterns that identify which job a finding's `location` belongs to.
+# Different rules emit different shapes:
+#
+#   - bare job name           — most ciguard core rules
+#   - "<job>:<line>"          — line-attached findings
+#   - "job[<name>].<path>"    — GitLab SCA (image / services / etc.)
+#   - "job[<name>]"           — GitLab SCA simple
+#   - "jobs.<name>.<path>"    — GitHub Actions SCA + IAM rules
+#   - "jobs.<name>"           — GitHub Actions simple
+#   - "stage[<name>].<path>"  — Jenkins SCA
+#   - "stage[<name>]"         — Jenkins simple
+#   - "global", "global.x",
+#     "pipeline.x", "<top-level>" — pipeline-level (no owning job)
+#
+# The visualiser groups findings under the job-node they belong to. A
+# regex extracts the candidate name from each bracket / dotted form;
+# we then verify it against the known-job-names list (so we don't
+# accidentally match a typo'd location that happens to look like a job).
 
-    `location` on a Finding can be the literal job name OR `<job>:<line>`
-    OR `global` / `include`. Job-attached findings include both the bare
-    job-name match and the `<job>:` prefix match.
+_LOC_PATTERNS = [
+    _re.compile(r"^job\[([^\]]+)\](?:\..*)?$"),
+    _re.compile(r"^stage\[([^\]]+)\](?:\..*)?$"),
+    _re.compile(r"^jobs\.([^.]+)(?:\..*)?$"),
+]
+
+
+def _owning_job(location: str, known_job_names: set) -> str | None:
+    """Return the job name a finding's `location` belongs to, or None
+    when the finding is pipeline-level / global / unattached."""
+    if location in known_job_names:
+        return location
+    if ":" in location:
+        head = location.split(":", 1)[0]
+        if head in known_job_names:
+            return head
+    for pat in _LOC_PATTERNS:
+        m = pat.match(location)
+        if m:
+            candidate = m.group(1)
+            if candidate in known_job_names:
+                return candidate
+    return None
+
+
+def _humanise_location(location: str) -> str:
+    """Render an internal location string into something readable for
+    side-panel display.
+
+    Examples:
+        job[deploy].image            → deploy · image
+        jobs.build.runs-on           → build · runs-on
+        stage[Test].steps.script     → Test · steps.script
+        global.variables             → Pipeline · variables
+        global.include               → Pipeline · include
+        pipeline.image               → Pipeline · image
+        global                       → Pipeline (global)
+        <top-level>                  → Pipeline (top-level)
     """
+    if location == "global":
+        return "Pipeline (global)"
+    if location == "<top-level>":
+        return "Pipeline (top-level)"
+    if location.startswith("global."):
+        return "Pipeline · " + location[len("global."):]
+    if location.startswith("pipeline."):
+        return "Pipeline · " + location[len("pipeline."):]
+    for prefix in ("job[", "stage["):
+        if location.startswith(prefix):
+            m = _re.match(r"^(?:job|stage)\[([^\]]+)\](?:\.(.*))?$", location)
+            if m:
+                rest = m.group(2)
+                return f"{m.group(1)}{(' · ' + rest) if rest else ''}"
+    if location.startswith("jobs."):
+        rest = location[len("jobs."):]
+        if "." in rest:
+            name, sub = rest.split(".", 1)
+            return f"{name} · {sub}"
+        return rest
+    return location
+
+
+def _findings_for_location(report: Report, job_name: str,
+                           known_job_names: set) -> List[Finding]:
+    """Match findings owned by a given job, recognising every location
+    shape rules emit (see `_LOC_PATTERNS`)."""
     matched: List[Finding] = []
-    prefix = f"{location}:"
     for f in report.findings:
-        if f.location == location or f.location.startswith(prefix):
+        if _owning_job(f.location, known_job_names) == job_name:
             matched.append(f)
     return matched
 
@@ -210,17 +288,22 @@ def _to_visual_data(report: Report) -> Dict[str, Any]:
     jobs_data: List[Dict[str, Any]] = []
     name_to_id: Dict[str, str] = {}
 
+    # Pre-compute the set of job names so location-matching can verify
+    # candidate names extracted from `job[...]` / `jobs.<name>` shapes.
+    known_job_names: set = {j.name for j in report.pipeline.jobs}
+
     for job in report.pipeline.jobs:
         job_id = _slug(job.name)
         name_to_id[job.name] = job_id
 
-        job_findings = _findings_for_location(report, job.name)
+        job_findings = _findings_for_location(report, job.name, known_job_names)
         finding_payloads = [
             {
                 "rule_id": f.rule_id,
                 "severity": f.severity.value,
                 "message": f.name,
                 "location": f.location,
+                "display_location": _humanise_location(f.location),
                 "evidence": f.evidence,
                 "category": f.category.value,
                 "fingerprint": f.fingerprint,
@@ -307,6 +390,8 @@ def _to_visual_data(report: Report) -> Dict[str, Any]:
                 "severity": f.severity.value,
                 "message": f.name,
                 "location": f.location,
+                "display_location": _humanise_location(f.location),
+                "owning_job": _owning_job(f.location, known_job_names),
                 "evidence": f.evidence,
                 "category": f.category.value,
                 "fingerprint": f.fingerprint,
@@ -1446,9 +1531,14 @@ _VIEWER_JS = r"""
       else if (diffData) status = 'UNCHANGED';
       if (status) r1.append('span').attr('class', `diff-status ${status}`).text(status);
       it.append('div').attr('class', 'message').text(f.message);
-      it.append('div').attr('class', 'location').text(f.location);
+      // Use display_location (humanised) — falls back to raw location.
+      it.append('div').attr('class', 'location').text(f.display_location || f.location);
       it.on('click', () => {
-        const target = data.jobs.find(j => f.location === j.name || f.location.startsWith(j.name + ':'));
+        // Use the precomputed `owning_job` mapping (server-side recognises
+        // every location shape: bare, job[name], jobs.name, stage[name]).
+        const target = f.owning_job
+          ? data.jobs.find(j => j.name === f.owning_job)
+          : null;
         if (target) selectJob(target.id);
         d3.selectAll('.finding-item').classed('selected', false);
         it.classed('selected', true);
