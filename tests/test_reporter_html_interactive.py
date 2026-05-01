@@ -318,6 +318,14 @@ def test_findings_carry_fingerprint() -> None:
     ("alpine:stable", "mutable"),
     ("nginx:edge", "mutable"),
     ("ubuntu:main", "mutable"),
+    # Slice 14c — extended mutable-tag set (synced with SCA-PIN-002).
+    ("nginx:master", "mutable"),
+    ("nginx:prod", "mutable"),
+    ("nginx:production", "mutable"),
+    ("nginx:dev", "mutable"),
+    ("nginx:development", "mutable"),
+    ("nginx:nightly", "mutable"),
+    ("nginx:LATEST", "mutable"),         # case-insensitive
     ("python:3.11.4", "tag"),
     ("python:3.11.4-slim", "tag"),
     ("ghcr.io/org/img:1.2.3", "tag"),
@@ -340,6 +348,50 @@ def test_pin_status_carried_through_to_node_data() -> None:
     assert by_name["build"]["pin_status"] == "digest"
     assert by_name["test"]["pin_status"] == "tag"
     assert by_name["deploy"]["pin_status"] == "mutable"
+
+
+def test_visualiser_classifier_is_shared_with_sca_module() -> None:
+    """Drift check — the visualiser must use the SAME classifier the SCA
+    rule uses, otherwise a node coloured 'mutable' might not produce a
+    SCA-PIN-002 finding (and vice versa). Importing through the reporter
+    module name is fine; pointing at a local copy is the bug we're
+    guarding against."""
+    from ciguard.analyzer.sca.image_extractor import classify_pin_status
+    assert html_interactive._image_pin_status is classify_pin_status
+
+
+# ===========================================================================
+# Pin-discipline aggregate (Slice 14c — header strip + embedded JSON)
+# ===========================================================================
+
+
+def test_pin_discipline_aggregate_in_embedded_json() -> None:
+    jobs = [
+        Job(name="a", image="python@sha256:" + "a" * 64),
+        Job(name="b", image="python@sha256:" + "b" * 64),
+        Job(name="c", image="python:3.11"),
+        Job(name="d", image="alpine:latest"),
+        Job(name="e", image="alpine:edge"),
+        Job(name="f", image="alpine:nightly"),
+        Job(name="no-image"),
+    ]
+    out = html_interactive.render(_basic_report(jobs=jobs))
+    data = _extract_json(out)
+    pin = data["score"]["pin_discipline"]
+    assert pin == {"digest": 2, "tag": 1, "mutable": 3}
+
+
+def test_pin_discipline_strip_renders_when_images_present() -> None:
+    jobs = [Job(name="a", image="alpine:latest"), Job(name="b", image="python:3.11")]
+    out = html_interactive.render(_basic_report(jobs=jobs))
+    assert 'class="summary-strip pin-strip"' in out
+    assert "pin-chip mutable" in out
+    assert "pin-chip tag" in out
+
+
+def test_pin_discipline_strip_omitted_when_no_images() -> None:
+    out = html_interactive.render(_basic_report(jobs=[Job(name="a"), Job(name="b")]))
+    assert 'class="summary-strip pin-strip"' not in out
 
 
 # ===========================================================================

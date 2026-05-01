@@ -1,5 +1,5 @@
 """
-Cross-platform image extraction.
+Cross-platform image extraction + pin-discipline classifier.
 
 SCA rules need to know "what container images does this pipeline reference?"
 The answer lives in three different model shapes (Pipeline / Workflow /
@@ -50,6 +50,50 @@ _IMAGE_REF_RE = re.compile(
 # Looser tag → cycle extraction. Strips suffixes like `-slim`, `-alpine`,
 # `-bullseye`, `-jdk-21`. Result is the leading version-like prefix.
 _TAG_VERSION_RE = re.compile(r"^(\d+(?:\.\d+){0,3})")
+
+
+# Tag values that are mutable by convention — the publisher routinely
+# re-points them to newer content. Single source of truth shared between
+# rule SCA-PIN-002 (which fires findings) and the html-interactive
+# visualiser (which colours pin badges). Add aggressively when new
+# floating-tag patterns surface in the wild.
+MUTABLE_TAGS = frozenset({
+    "latest",
+    "stable",
+    "edge",
+    "prod",
+    "production",
+    "main",
+    "master",
+    "dev",
+    "development",
+    "nightly",
+})
+
+
+def classify_pin_status(image: Optional[str]) -> str:
+    """Return the pin-discipline category for a raw image-reference string.
+
+    Categories:
+      - "digest" — `image[@:tag]@sha256:...` form (immutable, verifiable)
+      - "tag" — versioned tag without digest (`python:3.11.4`)
+      - "mutable" — tag in `MUTABLE_TAGS`, OR no tag at all (Docker
+        treats bare names as `:latest`)
+      - "" — no image declared
+
+    Used by the html-interactive reporter to colour per-job pin badges
+    AND by SCA-PIN-002 to decide which references to flag. Same word
+    means the same thing in both places by construction."""
+    if not image:
+        return ""
+    if "@sha256:" in image:
+        return "digest"
+    if ":" not in image:
+        return "mutable"          # bare name resolves to `:latest`
+    after_last_colon = image.rsplit(":", 1)[-1]
+    if after_last_colon.lower() in MUTABLE_TAGS:
+        return "mutable"
+    return "tag"
 
 
 @dataclass

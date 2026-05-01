@@ -98,36 +98,7 @@ _NEUTRAL_BORDER = "#3f3f46"  # zinc-700 — node has no findings
 # ---- Data-shape transform: Report → visualiser JSON -----------------------
 
 
-def _image_pin_status(image: str | None) -> str:
-    """Classify an image reference's pin discipline.
-
-    Mirrors the spec for Slice 14c rules SCA-PIN-001..002 even though
-    the rules themselves haven't shipped — the visualiser benefits from
-    surfacing this on every node from day one. Categories:
-
-      - "digest" — `image@sha256:...` form (immutable, verifiable)
-      - "tag" — versioned tag without digest (`python:3.11.4`)
-      - "mutable" — `:latest`, `:stable`, `:edge`, `:prod`, `:main`,
-        `:master`, OR no tag at all (defaults to `:latest` at pull time)
-      - "" — no image declared on this job
-    """
-    if not image:
-        return ""
-    # `image@sha256:abc...` — digest pin
-    if "@sha256:" in image:
-        return "digest"
-    # Split on last colon for `host:port/repo:tag` shapes — the tag is
-    # the suffix after the LAST colon if it doesn't look like a port.
-    if ":" not in image:
-        return "mutable"  # no tag = `:latest` at pull time
-    # Strip registry prefix (e.g. `ghcr.io/org/img`) — only the tag-side
-    # of the last colon matters for the pin category.
-    after_last_colon = image.rsplit(":", 1)[-1]
-    if after_last_colon.lower() in {
-        "latest", "stable", "edge", "prod", "main", "master",
-    }:
-        return "mutable"
-    return "tag"
+from ..analyzer.sca.image_extractor import classify_pin_status as _image_pin_status
 
 
 def _highest_severity(findings: List[Finding]) -> str:
@@ -355,6 +326,16 @@ def _to_visual_data(report: Report) -> Dict[str, Any]:
     for f in report.findings:
         by_severity_count[f.severity.value] += 1
 
+    # Pinning-discipline aggregate across every job that declares an image.
+    # Slice 14c — surfaced as a sidebar strip so the auditor can read the
+    # repo's pin posture at a glance, not only by inspecting individual node
+    # badges. Counts derive from `pin_status` already on each job dict so the
+    # numbers can never drift from the badge colours.
+    pin_counts: Dict[str, int] = defaultdict(int)
+    for jd in jobs_data:
+        if jd["pin_status"]:
+            pin_counts[jd["pin_status"]] += 1
+
     return {
         "schema_version": 1,  # bump if breaking changes to the shape
         "meta": {
@@ -379,6 +360,11 @@ def _to_visual_data(report: Report) -> Dict[str, Any]:
                 "supply_chain": report.risk_score.supply_chain,
             },
             "by_severity_count": dict(by_severity_count),
+            "pin_discipline": {
+                "digest": pin_counts.get("digest", 0),
+                "tag": pin_counts.get("tag", 0),
+                "mutable": pin_counts.get("mutable", 0),
+            },
         },
         "jobs": jobs_data,
         "edges": edges,
@@ -495,6 +481,32 @@ body {
 .sev-chip.Medium .dot { background: var(--med); }     .sev-chip.Medium   { color: var(--med);  border-color: rgba(245,158,11,0.25); }
 .sev-chip.Low .dot { background: var(--low); }        .sev-chip.Low      { color: var(--low);  border-color: rgba(34,197,94,0.25); }
 .sev-chip.Info .dot { background: var(--info); }      .sev-chip.Info     { color: var(--info); border-color: rgba(99,102,241,0.25); }
+
+/* Pin-discipline strip — same shape as severity strip but keyed to image
+   pinning categories (digest=good / tag=warning / mutable=danger). Renders
+   below the severity strip when at least one job declares an image. */
+.pin-strip { margin-top: 4px; }
+.pin-strip .strip-label {
+  font-size: 11px; color: var(--fg-dim);
+  text-transform: uppercase; letter-spacing: 0.06em; margin-right: 4px;
+}
+.pin-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+.pin-chip .dot { width: 6px; height: 6px; border-radius: 50%; }
+.pin-chip.zero { color: var(--fg-dim); }
+.pin-chip.zero .dot { background: var(--border-strong); }
+.pin-chip.digest .dot  { background: var(--low);  }  .pin-chip.digest  { color: var(--low);  border-color: rgba(34,197,94,0.25); }
+.pin-chip.tag .dot     { background: var(--med);  }  .pin-chip.tag     { color: var(--med);  border-color: rgba(245,158,11,0.25); }
+.pin-chip.mutable .dot { background: var(--crit); }  .pin-chip.mutable { color: var(--crit); border-color: rgba(239,68,68,0.25); }
 
 /* Score block on far right */
 .score-block { display: flex; align-items: center; gap: 12px; }
@@ -1601,6 +1613,29 @@ def render(report: Report) -> str:
         )
     severity_strip = "".join(severity_chips)
 
+    # Pin-discipline strip — three compact chips reflecting per-image pin
+    # status across every job that declares an image. Empty when nothing
+    # in the report references images at all (e.g. minimal Jenkins jobs).
+    pin = score.get("pin_discipline", {})
+    pin_total = pin.get("digest", 0) + pin.get("tag", 0) + pin.get("mutable", 0)
+    if pin_total:
+        pin_chips = []
+        for kind, label in (("digest", "digest"), ("tag", "tag"), ("mutable", "mutable")):
+            n = pin.get(kind, 0)
+            klass = kind if n else "zero"
+            pin_chips.append(
+                f'<span class="pin-chip {klass}" title="{n} image(s) pinned by {label}">'
+                f'<span class="dot"></span>{n} {label}</span>'
+            )
+        pin_strip = (
+            '<div class="summary-strip pin-strip" aria-label="Pinning discipline">'
+            '<span class="strip-label">pinning</span>'
+            + "".join(pin_chips) +
+            '</div>'
+        )
+    else:
+        pin_strip = ""
+
     grade = _html_escape(score["grade"])
     total_findings = sum(counts.values())
 
@@ -1625,6 +1660,7 @@ def render(report: Report) -> str:
       <span class="platform-chip">{_html_escape(meta['platform'])}</span>
     </div>
     <div class="summary-strip">{severity_strip}</div>
+    {pin_strip}
     <div class="score-block">
       <button class="compare-btn" id="compare-btn" aria-label="Compare against another scan">Compare…</button>
       <input type="file" id="compare-file" accept=".html,text/html" hidden>

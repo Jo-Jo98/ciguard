@@ -68,7 +68,11 @@ from ..models.workflow import Workflow
 from .rules import _finding_id
 from .sca.action_extractor import ActionReference, extract_action_references
 from .sca.endoflife import EndOfLifeClient
-from .sca.image_extractor import ImageReference, extract_images
+from .sca.image_extractor import (
+    MUTABLE_TAGS,
+    ImageReference,
+    extract_images,
+)
 from .sca.osv import OSVClient, normalise_severity
 
 
@@ -307,23 +311,9 @@ def rule_sca_pin_001(
 # SCA-PIN-002 — Mutable tag (cross-platform, High) — Slice 14c
 # ---------------------------------------------------------------------------
 
-# Tag values that are mutable by convention — the publisher routinely
-# re-points them to newer content. These are the supply-chain-attack surface
-# named by OWASP CICD-SEC-3 and the tj-actions/changed-files March 2025
-# incident. `latest` is the canonical example; the others are common
-# floating-tag patterns we see in real pipelines.
-_MUTABLE_TAGS = frozenset({
-    "latest",
-    "stable",
-    "edge",
-    "prod",
-    "production",
-    "main",
-    "master",
-    "dev",
-    "development",
-    "nightly",
-})
+# `MUTABLE_TAGS` lives in `sca/image_extractor.py` so the visualiser
+# (which colours pin badges) and SCA-PIN-002 (which fires findings)
+# stay in lockstep — same word means the same thing in both places.
 
 _PIN_002_COMPLIANCE = ComplianceMapping(
     iso_27001=["A.12.5.1", "A.14.2.2", "A.14.2.4"],
@@ -360,7 +350,7 @@ def rule_sca_pin_002(
         if image.is_digest_pinned:
             continue          # digest is the strongest pinning — never mutable
         tag_lower = (image.tag or "").lower()
-        if tag_lower and tag_lower not in _MUTABLE_TAGS:
+        if tag_lower and tag_lower not in MUTABLE_TAGS:
             continue          # versioned tag, even if not digest — SCA-PIN-001 handles
         # Either no tag at all, or one of the well-known mutable tag names.
         if image.tag:
