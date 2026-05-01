@@ -471,6 +471,63 @@ def test_render_job_yaml_handles_minimal_job() -> None:
 
 
 # ===========================================================================
+# Phase 1.4 — print mode + a11y + diff mode scaffolding
+# ===========================================================================
+
+
+def test_print_mode_css_present() -> None:
+    """Print stylesheet hides interactive controls + forces light mode."""
+    out = html_interactive.render(_basic_report(jobs=[Job(name="build")]))
+    assert "@media print" in out
+    # Print-only banner that appears in the printed deliverable
+    assert 'class="print-banner"' in out
+    # Interactive controls must be hidden when printed
+    assert ".panel-search, .panel-filter, .compare-btn" in out
+
+
+def test_skip_link_for_keyboard_users() -> None:
+    """Standard a11y skip-link to jump from header to graph."""
+    out = html_interactive.render(_basic_report(jobs=[Job(name="build")]))
+    assert 'class="skip-link"' in out
+    assert 'href="#graph-container"' in out
+
+
+def test_keyboard_focus_styles_present() -> None:
+    """Focus ring on nodes + finding items."""
+    out = html_interactive.render(_basic_report(jobs=[Job(name="build")]))
+    assert ":focus" in out
+    # Reduced-motion preference respected
+    assert "prefers-reduced-motion" in out
+
+
+def test_compare_button_and_diff_banner_present() -> None:
+    """Diff-mode entry point + status banner scaffolding."""
+    out = html_interactive.render(_basic_report(jobs=[Job(name="build")]))
+    assert 'id="compare-btn"' in out
+    assert 'id="compare-file"' in out
+    assert 'id="diff-banner"' in out
+    assert 'id="diff-added"' in out
+    assert 'id="diff-resolved"' in out
+    assert 'id="diff-clear"' in out
+
+
+def test_diff_status_classes_in_css() -> None:
+    """The visual vocabulary for NEW / RESOLVED / UNCHANGED status pills
+    must ship in the stylesheet."""
+    out = html_interactive.render(_basic_report(jobs=[Job(name="build")]))
+    assert ".diff-status.NEW" in out
+    assert ".diff-status.RESOLVED" in out
+    assert ".diff-status.UNCHANGED" in out
+
+
+def test_aria_live_region_on_diff_banner() -> None:
+    """Banner announces diff results to screen readers when it appears."""
+    out = html_interactive.render(_basic_report(jobs=[Job(name="build")]))
+    assert 'role="status"' in out
+    assert 'aria-live="polite"' in out
+
+
+# ===========================================================================
 # write_report file-system entry point
 # ===========================================================================
 

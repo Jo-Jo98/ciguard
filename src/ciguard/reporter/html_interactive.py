@@ -361,6 +361,9 @@ body {
   font-size: 13px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
 }
 
 /* ---- Top header bar ---- */
@@ -426,7 +429,7 @@ body {
 .score-block .score-num small { color: var(--fg-dim); font-size: 12px; font-weight: 400; margin-left: 2px; }
 
 /* ---- Main split layout ---- */
-main { display: flex; height: calc(100% - 65px); }
+main { display: flex; flex: 1; min-height: 0; }
 #graph-container {
   flex: 1;
   overflow: auto;
@@ -757,6 +760,139 @@ main { display: flex; height: calc(100% - 65px); }
   font-size: 12px;
   line-height: 1.5;
 }
+
+/* ---- Diff-mode UI ---- */
+.diff-status {
+  display: inline-block;
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+  margin-left: 6px;
+}
+.diff-status.NEW       { background: var(--crit); color: #0a0a0a; }
+.diff-status.RESOLVED  { background: var(--low); color: #0a0a0a; }
+.diff-status.UNCHANGED { background: var(--bg-elevated); color: var(--fg-dim); border: 1px solid var(--border); }
+.compare-btn {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--fg-muted);
+  font-size: 11px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 120ms;
+}
+.compare-btn:hover { color: var(--fg); border-color: var(--border-strong); }
+.compare-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.diff-banner {
+  display: none;
+  padding: 8px 22px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.diff-banner.visible { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.diff-banner .diff-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px; border-radius: 999px; font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.diff-banner .diff-pill.added    { background: rgba(239,68,68,0.15); color: var(--crit); border: 1px solid rgba(239,68,68,0.3); }
+.diff-banner .diff-pill.resolved { background: rgba(34,197,94,0.15); color: var(--low);  border: 1px solid rgba(34,197,94,0.3); }
+.diff-banner .diff-pill.unchanged { background: var(--bg-card); color: var(--fg-dim); border: 1px solid var(--border); }
+.diff-banner button {
+  background: none; border: none; color: var(--fg-dim);
+  cursor: pointer; font-family: inherit; font-size: 11px;
+  margin-left: auto;
+}
+.diff-banner button:hover { color: var(--fg); }
+/* Node border tweak in diff mode: nodes with new findings get a thicker red ring */
+.node.has-new rect.card { stroke: var(--crit); stroke-width: 2.5; }
+.node.fully-resolved rect.card { stroke: var(--low); stroke-width: 2.5; }
+
+/* ---- Keyboard accessibility ---- */
+.node:focus rect.card,
+.finding-item:focus,
+.finding-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.skip-link {
+  position: absolute;
+  left: -10000px;
+  top: -10000px;
+}
+.skip-link:focus {
+  position: fixed;
+  left: 12px; top: 12px;
+  background: var(--accent);
+  color: #fff;
+  padding: 8px 14px;
+  border-radius: 6px;
+  z-index: 1000;
+  text-decoration: none;
+  font-size: 12px;
+}
+
+/* Smooth motion (respects prefers-reduced-motion) */
+@media (prefers-reduced-motion: no-preference) {
+  .node rect.card { transition: stroke 120ms, stroke-width 120ms, filter 160ms; }
+  .edge { transition: stroke 160ms, opacity 160ms; }
+  .finding-item, .filter-btn, .compare-btn { transition: background 120ms, color 120ms, border-color 120ms; }
+}
+
+/* ---- Print mode (clean PDF export) ---- */
+@media print {
+  :root {
+    color-scheme: light;
+    --bg: #ffffff;
+    --bg-card: #ffffff;
+    --bg-card-hover: #ffffff;
+    --bg-elevated: #f4f4f5;
+    --fg: #18181b;
+    --fg-muted: #52525b;
+    --fg-dim: #71717a;
+    --border: #d4d4d8;
+    --border-strong: #a1a1aa;
+  }
+  html, body { overflow: visible !important; height: auto !important; background: #fff; color: #000; }
+  .panel-search, .panel-filter, .compare-btn, .skip-link, .diff-banner button { display: none !important; }
+  .app-header { padding: 12px 18px; border-bottom: 2px solid #000; page-break-after: avoid; }
+  .legend { page-break-before: avoid; }
+  main { display: block !important; height: auto !important; }
+  #graph-container { overflow: visible !important; height: auto !important; background: #fff !important; }
+  #graph-container svg { background: #fff; }
+  #side-panel {
+    width: 100% !important;
+    border-left: none !important;
+    border-top: 1px solid #d4d4d8;
+    page-break-before: always;
+  }
+  #findings-view, #job-detail {
+    display: block !important;
+  }
+  #findings-view.hidden { display: block !important; }
+  .findings-list, .detail-scroll { overflow: visible !important; max-height: none !important; }
+  .finding-item { page-break-inside: avoid; }
+  .node rect.card { fill: #fff !important; stroke: #71717a; }
+  .node:hover rect.card { filter: none !important; }
+  .swimlane-band rect { fill: #fafafa !important; stroke: #d4d4d8 !important; }
+  .tooltip { display: none !important; }
+  /* Print-only banner so the printed deliverable is self-explanatory */
+  .print-banner {
+    display: block;
+    padding: 6px 18px;
+    border-bottom: 1px solid #d4d4d8;
+    font-size: 11px;
+    color: #52525b;
+    page-break-after: avoid;
+  }
+}
+.print-banner { display: none; }
 """
 
 _VIEWER_JS = r"""
@@ -946,6 +1082,18 @@ _VIEWER_JS = r"""
     }
   });
 
+  // ---- Accessibility: nodes are keyboard-reachable buttons ----
+  nodeSel
+    .attr('role', 'button')
+    .attr('tabindex', 0)
+    .attr('aria-label', d => {
+      const f = d.findings.length;
+      const sev = d.highest_severity ? ` worst severity ${d.highest_severity},` : '';
+      const env = d.environment ? ` environment ${d.environment},` : '';
+      const prod = d.targets_production ? ' deploys to production,' : '';
+      return `Job ${d.name},${env}${prod}${sev} ${f} finding${f===1?'':'s'}.`;
+    });
+
   // Hover tooltip + click-select wiring
   nodeSel
     .on('mouseenter', (event, d) => {
@@ -966,7 +1114,15 @@ _VIEWER_JS = r"""
       tooltip.style('left', (event.pageX + 14) + 'px').style('top', (event.pageY + 12) + 'px');
     })
     .on('mouseleave', () => tooltip.style('opacity', 0))
-    .on('click', (event, d) => selectJob(d.id));
+    .on('click', (event, d) => selectJob(d.id))
+    .on('keydown', (event, d) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        selectJob(d.id);
+      } else if (event.key === 'Escape') {
+        deselectJob();
+      }
+    });
 
   // ---- Side-panel state machine ----
   // Two views: "findings" (default — global list with filters + search)
@@ -1152,6 +1308,160 @@ _VIEWER_JS = r"""
     return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
 
+  // ---- Global keyboard handlers ----
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && activeJob) deselectJob();
+    // `/` focuses the search input (common convention)
+    if (event.key === '/' && document.activeElement.tagName !== 'INPUT') {
+      event.preventDefault();
+      document.getElementById('findings-search')?.focus();
+    }
+  });
+
+  // ---- Diff mode: load a second ciguard map.html, compute diff ----
+  let diffData = null;  // the previous-scan data, or null when not in diff mode
+
+  document.getElementById('compare-btn').addEventListener('click', () => {
+    if (diffData) {
+      clearDiff();
+    } else {
+      document.getElementById('compare-file').click();
+    }
+  });
+  document.getElementById('compare-file').addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    file.text().then(text => {
+      // Extract the ciguard-data JSON blob from the HTML. Match the
+      // start tag and the closing </script>.
+      const m = text.match(/<script id="ciguard-data" type="application\/json">([\s\S]*?)<\/script>/);
+      if (!m) {
+        alert('That file does not contain a ciguard-data blob.');
+        return;
+      }
+      try {
+        const parsed = JSON.parse(m[1].replace(/<\\\//g, '</'));
+        applyDiff(parsed);
+      } catch (err) {
+        alert('Failed to parse the previous-scan data: ' + err.message);
+      }
+    });
+    // Reset so re-selecting the same file re-fires the change event
+    e.target.value = '';
+  });
+  document.getElementById('diff-clear').addEventListener('click', clearDiff);
+
+  function applyDiff(prev) {
+    diffData = prev;
+    document.getElementById('compare-btn').classList.add('active');
+    document.getElementById('compare-btn').textContent = 'Clear comparison';
+
+    // Index by fingerprint
+    const prevFps = new Set(prev.findings.map(f => f.fingerprint));
+    const curFps  = new Set(data.findings.map(f => f.fingerprint));
+    let added = 0, resolved = 0, unchanged = 0;
+    const newFps = new Set(), resolvedFps = new Set();
+    for (const f of data.findings) {
+      if (prevFps.has(f.fingerprint)) { unchanged++; }
+      else { added++; newFps.add(f.fingerprint); }
+    }
+    for (const f of prev.findings) {
+      if (!curFps.has(f.fingerprint)) { resolved++; resolvedFps.add(f.fingerprint); }
+    }
+
+    // Banner
+    const banner = document.getElementById('diff-banner');
+    banner.classList.add('visible');
+    document.getElementById('diff-added').textContent = `+${added} new`;
+    document.getElementById('diff-resolved').textContent = `−${resolved} resolved`;
+    document.getElementById('diff-unchanged').textContent = `${unchanged} unchanged`;
+    const prevTs = prev.meta?.scan_timestamp || '(unknown)';
+    document.getElementById('diff-meta').textContent = `vs scan at ${prevTs}`;
+
+    // Annotate findings in the global list (re-render)
+    data.__diffNew = newFps;
+    data.__diffResolved = resolvedFps;
+    // Inject "RESOLVED" pseudo-findings so the user can SEE what's gone
+    data.__resolvedFindings = prev.findings.filter(f => resolvedFps.has(f.fingerprint));
+
+    // Mark nodes whose findings changed
+    const newJobIds = new Set();
+    for (const j of data.jobs) {
+      const has = j.findings.some(f => newFps.has(f.fingerprint));
+      if (has) newJobIds.add(j.id);
+    }
+    d3.selectAll('.node').classed('has-new', d => newJobIds.has(d.id));
+
+    renderFindings();
+  }
+
+  function clearDiff() {
+    diffData = null;
+    document.getElementById('compare-btn').classList.remove('active');
+    document.getElementById('compare-btn').textContent = 'Compare…';
+    document.getElementById('diff-banner').classList.remove('visible');
+    delete data.__diffNew;
+    delete data.__diffResolved;
+    delete data.__resolvedFindings;
+    d3.selectAll('.node').classed('has-new', false).classed('fully-resolved', false);
+    renderFindings();
+  }
+
+  // Patch renderFindings to surface diff status when active
+  const _origRenderFindings = renderFindings;
+  renderFindings = function() {
+    findingsList.html('');
+    let pool = [...data.findings];
+    if (data.__resolvedFindings) {
+      // Append resolved findings as ghosts at the end of the list
+      pool = pool.concat(data.__resolvedFindings.map(f => ({...f, __resolved: true})));
+    }
+    const items = pool.filter(f => {
+      if (activeSeverity !== 'all' && f.severity !== activeSeverity) return false;
+      if (!matchSearch(f, searchQuery)) return false;
+      return true;
+    });
+    if (!items.length) {
+      findingsList.append('div').attr('class', 'findings-empty')
+        .text(searchQuery
+          ? `No findings match "${searchQuery}".`
+          : 'No findings match the current filter.');
+      d3.select('#findings-count').text(`0 of ${pool.length}`);
+      return;
+    }
+    items.forEach(f => {
+      const it = findingsList.append('div').attr('class', 'finding-item')
+        .attr('data-fp', f.fingerprint)
+        .attr('role', 'button')
+        .attr('tabindex', 0);
+      const r1 = it.append('div').attr('class', 'row1');
+      r1.append('span').attr('class', `sev-pill ${f.severity}`).text(f.severity);
+      r1.append('span').attr('class', 'rule-id').text(f.rule_id);
+      // Diff-status pill
+      let status = null;
+      if (f.__resolved) status = 'RESOLVED';
+      else if (data.__diffNew?.has(f.fingerprint)) status = 'NEW';
+      else if (diffData) status = 'UNCHANGED';
+      if (status) r1.append('span').attr('class', `diff-status ${status}`).text(status);
+      it.append('div').attr('class', 'message').text(f.message);
+      it.append('div').attr('class', 'location').text(f.location);
+      it.on('click', () => {
+        const target = data.jobs.find(j => f.location === j.name || f.location.startsWith(j.name + ':'));
+        if (target) selectJob(target.id);
+        d3.selectAll('.finding-item').classed('selected', false);
+        it.classed('selected', true);
+      })
+      .on('keydown', function(event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          this.click();
+        }
+      });
+    });
+    d3.select('#findings-count').text(`${items.length} of ${pool.length}`);
+  };
+  void _origRenderFindings;  // keep reference for debugging
+
   // Initial render
   renderFindings();
 })();
@@ -1200,6 +1510,10 @@ def render(report: Report) -> str:
   <style>{_VIEWER_CSS}</style>
 </head>
 <body>
+  <a href="#graph-container" class="skip-link">Skip to pipeline diagram</a>
+  <div class="print-banner">
+    ciguard audit · {_html_escape(meta['pipeline_name'])} · {_html_escape(meta['platform'])} · scanned {_html_escape(meta['scan_timestamp'])} · grade {grade} ({score['overall']:.0f}/100)
+  </div>
   <header class="app-header">
     <div class="brand">
       <span class="product">ciguard audit</span>
@@ -1208,10 +1522,20 @@ def render(report: Report) -> str:
     </div>
     <div class="summary-strip">{severity_strip}</div>
     <div class="score-block">
-      <div class="grade-pill {grade}">{grade}</div>
-      <div class="score-num">{score['overall']:.0f}<small>/100</small></div>
+      <button class="compare-btn" id="compare-btn" aria-label="Compare against another scan">Compare…</button>
+      <input type="file" id="compare-file" accept=".html,text/html" hidden>
+      <div class="grade-pill {grade}" aria-label="Grade {grade}">{grade}</div>
+      <div class="score-num" aria-label="Score {score['overall']:.0f} of 100">{score['overall']:.0f}<small>/100</small></div>
     </div>
   </header>
+  <div class="diff-banner" id="diff-banner" role="status" aria-live="polite">
+    <strong>Diff against previous scan:</strong>
+    <span class="diff-pill added" id="diff-added">+0 new</span>
+    <span class="diff-pill resolved" id="diff-resolved">−0 resolved</span>
+    <span class="diff-pill unchanged" id="diff-unchanged">0 unchanged</span>
+    <span id="diff-meta"></span>
+    <button id="diff-clear" aria-label="Clear comparison">clear</button>
+  </div>
   <main>
     <div id="graph-container"></div>
     <aside id="side-panel">
