@@ -929,6 +929,166 @@ def _print_topology_summary(
         print(output, end="")
 
 
+# ---------------------------------------------------------------------------
+# `audit-org` subcommand (Slice 17, session 1)
+# ---------------------------------------------------------------------------
+
+
+def cmd_audit_org(args: argparse.Namespace) -> int:
+    """Run the org-level audit. Walks every repo in `--org`, scans
+    pipeline files via the GitHub Contents API, rolls findings up
+    into an `OrgAuditReport`. `--format html` writes the standalone
+    dashboard; `--format json` emits the full report; default text
+    prints a one-screen posture summary."""
+    from ciguard.audit_org import audit_org, github_org_provider_from_env
+
+    provider = github_org_provider_from_env()
+    if provider is None:
+        print(
+            f"{_RED}Error:{_RESET} `audit-org` requires CIGUARD_GITHUB_TOKEN. "
+            "Set a PAT (or fine-grained token) with `repo` (or `public_repo`) "
+            "scope and re-run.",
+            file=sys.stderr,
+        )
+        return 1
+
+    report = audit_org(
+        args.org,
+        provider,
+        include=args.include,
+        exclude=args.exclude,
+        limit=args.limit,
+        include_archived=args.include_archived,
+        include_forks=args.include_forks,
+        offline=args.offline,
+    )
+
+    if args.format == "json":
+        import json as _json
+        payload = _json.dumps(report.model_dump(mode="json"), indent=2, default=str)
+        if args.output and args.output != "-":
+            Path(args.output).write_text(payload + "\n", encoding="utf-8")
+        else:
+            print(payload)
+        return _audit_org_exit_code(args, report)
+
+    if args.format == "html":
+        from ciguard.reporter import org_audit_html
+        if args.output and args.output != "-":
+            org_audit_html.write_report(report, Path(args.output))
+            print(f"Org audit HTML written to {args.output}")
+        else:
+            print(org_audit_html.render(report), end="")
+        return _audit_org_exit_code(args, report)
+
+    _print_org_audit_summary(report, output_path=args.output)
+    return _audit_org_exit_code(args, report)
+
+
+def _audit_org_exit_code(args, report) -> int:
+    """Apply `--fail-on` against the rolled-up by-severity counts.
+    Threshold gate matches `scan-repo` semantics — informational by
+    default; opts in to break CI by passing a severity threshold."""
+    if not getattr(args, "fail_on", None) or args.fail_on == "none":
+        return 0
+    severities = ["Critical", "High", "Medium", "Low", "Info"]
+    if args.fail_on not in severities:
+        return 0
+    cutoff = severities.index(args.fail_on)
+    by_sev = report.by_severity
+    for i, sev in enumerate(severities):
+        if i <= cutoff and by_sev.get(sev, 0) > 0:
+            return 1
+    return 0
+
+
+def _print_org_audit_summary(report, *, output_path: Optional[str]) -> None:
+    """Posture-focused text summary for the terminal — what an auditor
+    skims after `ciguard audit-org` completes. Mirrors the inventory /
+    topology summary shape so the three audit verbs read the same."""
+    lines: list[str] = []
+    lines.append(
+        f"{_BOLD}ciguard audit-org{_RESET} — {report.org} "
+        f"({report.provider})"
+    )
+    lines.append(
+        f"  {report.repos_scanned} of {len(report.repos)} repos scanned · "
+        f"{report.total_findings} findings · "
+        f"{report.repos_with_findings} repos with findings"
+    )
+    by_sev = report.by_severity
+    sev_bits = []
+    sev_colours = {
+        "Critical": _RED, "High": _RED, "Medium": _YELLOW,
+        "Low": _GREEN, "Info": _CYAN,
+    }
+    for sev in ("Critical", "High", "Medium", "Low", "Info"):
+        n = by_sev.get(sev, 0)
+        if n:
+            colour = sev_colours.get(sev, _RESET)
+            sev_bits.append(f"{colour}{n} {sev}{_RESET}")
+    if sev_bits:
+        lines.append("  " + " · ".join(sev_bits))
+    if report.skipped_archived or report.skipped_forks:
+        bits = []
+        if report.skipped_archived:
+            bits.append(f"{report.skipped_archived} archived")
+        if report.skipped_forks:
+            bits.append(f"{report.skipped_forks} forks")
+        lines.append(f"  {_DIM}skipped: {', '.join(bits)}{_RESET}")
+    lines.append("")
+
+    dist = report.grade_distribution
+    if any(dist.values()):
+        lines.append(f"{_BOLD}Grade distribution:{_RESET}")
+        for grade in ("A", "B", "C", "D", "F", "?"):
+            n = dist.get(grade, 0)
+            if n:
+                label = "no scan" if grade == "?" else grade
+                lines.append(f"  {label}: {n}")
+        lines.append("")
+
+    plat = report.platforms_detected
+    if plat:
+        lines.append(f"{_BOLD}Platforms detected:{_RESET}")
+        for name, n in sorted(plat.items(), key=lambda kv: -kv[1]):
+            lines.append(f"  {name}: {n}")
+        lines.append("")
+
+    worst_first = sorted(
+        (r for r in report.repos if r.total_findings > 0),
+        key=lambda r: -r.total_findings,
+    )
+    if worst_first:
+        lines.append(f"{_BOLD}Top repos by finding count:{_RESET}")
+        for r in worst_first[:10]:
+            grade_str = r.grade or "?"
+            lines.append(
+                f"  {r.repo}: {r.total_findings} findings · "
+                f"grade {grade_str}"
+            )
+        lines.append("")
+
+    if report.errors:
+        lines.append(f"{_BOLD}{_RED}Errors ({len(report.errors)}):{_RESET}")
+        for err in report.errors[:5]:
+            repo = err.get("repo", "(global)")
+            lines.append(
+                f"  {repo} [{err.get('phase', '?')}]: {err.get('error', '')}"
+            )
+        if len(report.errors) > 5:
+            lines.append(f"  … {len(report.errors) - 5} more")
+        lines.append("")
+
+    output = "\n".join(lines) + "\n"
+    if output_path and output_path != "-":
+        import re as _re
+        plain = _re.sub(r"\033\[[0-9;]*m", "", output)
+        Path(output_path).write_text(plain, encoding="utf-8")
+    else:
+        print(output, end="")
+
+
 def _print_terminal_report(report) -> None:
     import textwrap
 
@@ -1315,6 +1475,71 @@ def main() -> int:
              "JSON `verification` field + the text summary.",
     )
 
+    # ---- `audit-org` subcommand (Slice 17): walk every repo in a
+    # GitHub org, scan their pipeline files, produce a multi-repo
+    # posture dashboard. Requires CIGUARD_GITHUB_TOKEN. Pure
+    # orchestration around `scan_repo()` — every per-file finding
+    # the dashboard reports is the same finding `scan-repo` would
+    # have reported run locally against a clone.
+    audit_org_parser = subparsers.add_parser(
+        "audit-org",
+        help="Walk every repo in a GitHub organisation, scan pipeline "
+             "files in each, and produce an org-wide posture dashboard.",
+    )
+    audit_org_parser.add_argument(
+        "--org", required=True,
+        help="GitHub org (or user) name to audit. Falls back to the "
+             "user-repos endpoint if `--org` isn't an organisation slug.",
+    )
+    audit_org_parser.add_argument(
+        "--format", "-f", default="text",
+        choices=["text", "json", "html"],
+        help="Output format. `text` prints a posture summary; `json` "
+             "emits the full OrgAuditReport; `html` writes a self-"
+             "contained dashboard.",
+    )
+    audit_org_parser.add_argument(
+        "--output", "-o", default=None,
+        help="Where to write the output. Default stdout.",
+    )
+    audit_org_parser.add_argument(
+        "--include", default=None,
+        help="Regex on `owner/name`. Only matching repos are audited.",
+    )
+    audit_org_parser.add_argument(
+        "--exclude", default=None,
+        help="Regex on `owner/name`. Matching repos are skipped.",
+    )
+    audit_org_parser.add_argument(
+        "--limit", type=int, default=None,
+        help="Maximum repos to audit (after include/exclude filtering). "
+             "Useful for sampling a large org during initial setup.",
+    )
+    audit_org_parser.add_argument(
+        "--include-archived", action="store_true", default=False,
+        help="Audit archived repos too. Default: skipped (typically host "
+             "stale pipelines that shouldn't move the org's posture).",
+    )
+    audit_org_parser.add_argument(
+        "--include-forks", action="store_true", default=False,
+        help="Audit forks too. Default: skipped (their pipelines usually "
+             "mirror upstream and double-count posture).",
+    )
+    audit_org_parser.add_argument(
+        "--offline", action="store_true", default=False,
+        help="Skip SCA network enrichment (EOL/CVE) for the per-repo "
+             "scans. Provider HTTP calls (repo enumeration + file "
+             "fetch) still happen — the org audit can't run without "
+             "those.",
+    )
+    audit_org_parser.add_argument(
+        "--fail-on", default="none",
+        choices=["none", "Critical", "High", "Medium", "Low", "Info"],
+        help="Exit non-zero when the rolled-up severity counts include "
+             "any finding at or above this threshold. Default `none` "
+             "(informational); same semantics as `scan-repo --fail-on`.",
+    )
+
     args = parser.parse_args()
 
     if args.command == "scan":
@@ -1446,6 +1671,8 @@ def main() -> int:
         return cmd_inventory(args)
     elif args.command == "topology":
         return cmd_topology(args)
+    elif args.command == "audit-org":
+        return cmd_audit_org(args)
     else:
         parser.print_help()
         return 0
