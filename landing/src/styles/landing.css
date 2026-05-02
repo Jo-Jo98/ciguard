@@ -87,10 +87,14 @@ p { margin: 0 0 12px; color: var(--fg); max-width: 64ch; }
   text-decoration: none;
 }
 .brand:hover { text-decoration: none; }
+/* Default: inherit font size from context so inline brand mentions in
+ * prose look the same weight as surrounding copy. Header + footer
+ * override below for the larger wordmark presence. */
 .brand-mark {
-  font-size: 20px; font-weight: 700; letter-spacing: -0.01em;
+  font-weight: 700; letter-spacing: -0.01em;
   color: var(--fg);
 }
+.brand .brand-mark { font-size: 20px; }
 .brand-g {
   background: linear-gradient(135deg, #38bdf8, #6366f1);
   -webkit-background-clip: text; background-clip: text;
