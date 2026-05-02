@@ -24,7 +24,6 @@ from ciguard.models.topology import (
     EnvTransition,
     Environment,
     NetworkSegment,
-    SecretScope,
     Service,
     Topology,
 )

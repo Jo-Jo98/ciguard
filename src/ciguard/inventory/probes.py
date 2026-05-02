@@ -24,7 +24,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Protocol
+from typing import Any, Dict, Iterable, List, Optional, Protocol
 
 from ..analyzer.sca.endoflife import EndOfLifeClient
 from ..models.inventory import InventoryEntry, InventoryReport

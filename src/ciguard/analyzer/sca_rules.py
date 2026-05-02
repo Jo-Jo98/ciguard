@@ -473,7 +473,6 @@ def _helm_finding_for_line(location: str, line: str) -> Optional[Finding]:
     if version_match:
         version_value = version_match.group("value").strip().strip("\"'")
         if version_value.lower() in _HELM_MUTABLE_VERSIONS:
-            problem = f"`helm {verb} --version {version_value}`"
             description = (
                 f"Helm chart pulled with mutable version `{version_value}` "
                 "— the chart maintainer can re-point this label to different "
@@ -484,7 +483,6 @@ def _helm_finding_for_line(location: str, line: str) -> Optional[Finding]:
         else:
             return None       # versioned, looks fine
     else:
-        problem = f"`helm {verb}` without `--version`"
         description = (
             f"Helm `{verb}` invoked without `--version` — Helm resolves to "
             "the latest chart version available in the configured "

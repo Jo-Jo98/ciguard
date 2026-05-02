@@ -43,6 +43,8 @@ import yaml
 
 from ciguard.models.pipeline import Finding, Job, Report, Severity
 
+from ..analyzer.sca.image_extractor import classify_pin_status as _image_pin_status
+
 
 def _render_job_yaml(job: Job) -> str:
     """Re-serialise a parsed Job to YAML for the click-to-detail panel.
@@ -96,9 +98,6 @@ _NEUTRAL_BORDER = "#3f3f46"  # zinc-700 — node has no findings
 
 
 # ---- Data-shape transform: Report → visualiser JSON -----------------------
-
-
-from ..analyzer.sca.image_extractor import classify_pin_status as _image_pin_status
 
 
 def _highest_severity(findings: List[Finding]) -> str:

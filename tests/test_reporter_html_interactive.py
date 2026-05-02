@@ -93,7 +93,9 @@ def test_render_inlines_d3_not_cdn() -> None:
     # Every <script> tag in the output must have no `src=` attribute —
     # they're all inline. (The D3 source itself contains URLs in comments,
     # which is fine; what matters is no runtime fetch.)
-    script_tags = re.findall(r"<script[^>]*>", out)
+    # Case-insensitive `[Ss]` matching closes a `py/bad-tag-filter` alert;
+    # we ship lowercase but the regex should still resist UPPERCASE inputs.
+    script_tags = re.findall(r"<[Ss][Cc][Rr][Ii][Pp][Tt][^>]*>", out)
     for tag in script_tags:
         assert "src=" not in tag, f"external script reference found: {tag}"
     # The vendored D3 banner comment ships with the file.
@@ -672,9 +674,11 @@ def test_no_unescaped_close_script_inside_inline_scripts() -> None:
     out = html_interactive.render(_basic_report(jobs=[Job(name="build")]))
     # Every occurrence of `</script>` must be at a tag-boundary position.
     # Test by stripping all properly-paired script blocks and asserting
-    # nothing's left over.
+    # nothing's left over. The `[\s>]` after `script` matches both
+    # `</script>` and `</script >` per HTML spec — closes a CodeQL
+    # `py/bad-tag-filter` alert without changing what we test.
     stripped = re.sub(
-        r"<script[^>]*>[\s\S]*?</script>", "", out,
+        r"<script[^>]*>[\s\S]*?</script\s*>", "", out,
         flags=re.IGNORECASE,
     )
     assert "</script>" not in stripped, (
