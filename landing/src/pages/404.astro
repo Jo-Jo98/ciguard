@@ -1,0 +1,29 @@
+---
+// Custom 404 page. Cloudflare Pages serves dist/404.html when no
+// other route matches; without this file, Pages falls back to
+// returning index.html with a 200 status, which (a) breaks SEO with
+// duplicate content and (b) masks reconnaissance probes by making
+// every path look "found". Astro auto-generates dist/404.html from
+// this src/pages/404.astro at build time.
+import Base from "../layouts/Base.astro";
+---
+
+<Base
+  title="404 — page not found · CIGuard"
+  description="The page you're looking for doesn't exist on ciguard.dev."
+  canonicalPath="/"
+>
+  <section class="hero">
+    <div class="hero-inner">
+      <span class="hero-eyebrow">404</span>
+      <h1>This page doesn't exist.</h1>
+      <p class="hero-lede">
+        The link you followed may be broken, or the page may have been moved.
+      </p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="/">Back to home &rarr;</a>
+        <a class="btn" href="https://github.com/Jo-Jo98/ciguard">View on GitHub</a>
+      </div>
+    </div>
+  </section>
+</Base>
