@@ -5,6 +5,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Slice 16 session 2 (topology HTML swimlane reporter)
+
+- **`ciguard topology --format html --output topology.html`** — self-contained dark-mode swimlane page rendering the cross-pipeline graph: services × environments grid with promotion-transition arrows showing which gates protect each step, plus secret-scope blast-radius and network-reachability panels. Same visual vocabulary as `inventory_html.py` and `html_interactive.py` so the audit deliverables are coherent. Print-friendly via `@media print`. Pure function in new `src/ciguard/reporter/topology_html.py` — no JavaScript, no dependencies, unit-tested on the rendered string.
+- **Layout decisions:** environments order left-to-right by tier (development → test → staging → production); production-tier columns get a red-tinted header so they're always findable; deploys to production with no gates render with a red border + danger-tinted background; gateless promotion transitions render with a red `→` arrow and explicit `no gates` chip in the inter-column transition row.
+- **Top-of-page warnings banner** enumerates the auditor's highest-signal red flags: gateless deploys to production-tier environments AND gateless transitions whose `to_env` is production-tier. Operators see the worst posture issues without scrolling. Banner is omitted entirely when there are none — clean topologies stay quiet.
+- **Bottom panels:** secret-scope blast radius (which environments + services share each scope?) and network reachability (transitive closure of `can_reach` per segment, marked `isolated` when empty). Both omitted when their underlying entity collection is empty.
+- **Why standalone vs embedded** in the per-pipeline visualiser: topology is per-org, the visualiser is per-pipeline. Embedding the same topology page in every pipeline's HTML would duplicate the data N times. Slice 17's org-level audit will combine both into one page.
+- **Test count: 836 → 856 (+20)** — `tests/test_topology_html.py` exercises document shape, swimlane ordering + production highlighting, deploy-cell + empty-cell + danger states, transition-row arrow direction, warnings-banner presence/absence, secret + network panels, HTML escaping for operator-supplied evil, and `write_report` directory creation.
+
 ### Added — Slice 16 session 1 (topology data model + YAML loader)
 
 - **`ciguard topology` CLI verb** — validates and summarises a `ciguard.topology.yml` file (the cross-pipeline graph: services, environments, deploy edges, promotion gates, secret scopes, network segments). Auto-discovers from cwd upward, same convention as `.ciguardignore`. Text format prints an auditor-focused posture summary (production deploy targets + their gates, gateless promotions called out in yellow, secret-scope blast radius, network reachability per segment); `--format json` emits the full validated `Topology` model for downstream tooling.

@@ -721,6 +721,15 @@ def cmd_topology(args: argparse.Namespace) -> int:
             print(payload)
         return 0
 
+    if args.format == "html":
+        from ciguard.reporter import topology_html
+        if args.output and args.output != "-":
+            topology_html.write_report(topology, Path(args.output))
+            print(f"Topology HTML written to {args.output}")
+        else:
+            print(topology_html.render(topology), end="")
+        return 0
+
     _print_topology_summary(topology, source=path, output_path=args.output)
     return 0
 
@@ -1139,9 +1148,12 @@ def main() -> int:
     )
     topology_parser.add_argument(
         "--format", "-f", default="text",
-        choices=["text", "json"],
+        choices=["text", "json", "html"],
         help="Output format. `text` prints a summary; `json` emits the "
-             "full validated Topology model.",
+             "full validated Topology model; `html` writes a self-contained "
+             "swimlane diagram (services × environments + transitions + "
+             "secret scopes + network reachability) suitable as an audit "
+             "deliverable.",
     )
     topology_parser.add_argument(
         "--output", "-o", default=None,

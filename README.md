@@ -355,10 +355,13 @@ Read-only credentials are recommended throughout. The Jenkins probe needs `Overa
 The cross-pipeline picture: which services exist, which environments they deploy to, which gates separate environment transitions, which secret scopes are shared, which environments can reach which others. Operator-asserted via `ciguard.topology.yml` at the repo root (auto-discovered by walking up from the working directory, like `.ciguardignore`).
 
 ```bash
-ciguard topology                                  # auto-discover + summarise
-ciguard topology --input infra/topology.yml       # explicit path
-ciguard topology --format json                    # machine-readable
+ciguard topology                                          # auto-discover + summarise
+ciguard topology --input infra/topology.yml               # explicit path
+ciguard topology --format json                            # machine-readable
+ciguard topology --format html --output topology.html     # standalone audit deliverable
 ```
+
+The HTML view is a swimlane grid (services × environments) with promotion-transition arrows showing which gates protect each step, plus secret-scope blast-radius and network-reachability panels. Production-tier columns are highlighted; gateless deploys to production AND gateless transitions into production tier render in a top-of-page red warnings banner so the auditor sees the worst posture issues without scrolling. Print-friendly via `@media print` so it exports cleanly to PDF.
 
 Minimal example:
 
