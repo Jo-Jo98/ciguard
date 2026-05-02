@@ -1,0 +1,259 @@
+---
+import Base from "../layouts/Base.astro";
+---
+
+<Base
+  title="CIGuard — CI/CD pipeline security audit visualiser"
+  description="Self-hosted CI/CD security audit tool. Single-file HTML deliverables for pipelines, infrastructure inventory, multi-environment topology, and org-wide posture. Apache-2.0."
+>
+  <section class="hero">
+    <div class="hero-inner">
+      <span class="hero-eyebrow">CI/CD security · self-hosted · Apache-2.0</span>
+      <h1>
+        Audit-grade visualisations of <br />
+        your CI/CD security posture.
+      </h1>
+      <p class="hero-lede">
+        ciguard is a self-hosted security auditor for GitLab CI, GitHub Actions, and Jenkins pipelines.
+        It produces single-file HTML deliverables — the kind you can email to a customer
+        or attach to an audit report — covering per-pipeline maps, infrastructure inventory, multi-environment topology, and org-wide posture.
+      </p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="https://github.com/Jo-Jo98/ciguard#readme">
+          Get started &rarr;
+        </a>
+        <a class="btn" href="https://github.com/Jo-Jo98/ciguard">
+          View on GitHub
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section class="surface">
+    <div class="section-inner">
+      <div class="section-eyebrow">What it produces</div>
+      <h2>Four audit deliverables, one toolchain.</h2>
+      <p class="muted">
+        Every artifact is a self-contained HTML file with vendored D3 inline.
+        Open it in any browser, no server needed. Print to PDF for the audit pack.
+      </p>
+
+      <div class="cards">
+        <div class="card">
+          <h3>Pipeline visualiser</h3>
+          <p>
+            Interactive D3 map of one pipeline's job DAG. Severity-coloured
+            cards, gate iconography, click-to-detail YAML + remediation,
+            diff mode against a previous scan, fully keyboard-accessible.
+          </p>
+          <div class="card-meta">
+            <span class="card-chip">3 platforms</span>
+            <span class="card-chip">46 rules</span>
+            <span class="card-chip">17 policies</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Infrastructure inventory</h3>
+          <p>
+            Operator-supplied admin-API audit of CI/CD tooling versions —
+            Jenkins, GitLab, GHE, Nexus, Artifactory, SonarQube, ArgoCD,
+            Harbor — cross-referenced with endoflife.date for EOL/EOS warnings.
+          </p>
+          <div class="card-meta">
+            <span class="card-chip">8 probes</span>
+            <span class="card-chip">EOL · EOS</span>
+            <span class="card-chip">env-var auth</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Multi-environment topology</h3>
+          <p>
+            Cross-pipeline swimlane: services × environments + promotion
+            transitions + secret scopes + network reachability. Live-API
+            verification flags drift between asserted gates and actual GitHub
+            deployment-environment / branch-protection state.
+          </p>
+          <div class="card-meta">
+            <span class="card-chip">scan overlay</span>
+            <span class="card-chip">live-API verify</span>
+            <span class="card-chip">drift panel</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Org-level audit dashboard</h3>
+          <p>
+            Walk every repo in a GitHub org, scan every pipeline file,
+            roll into one posture dashboard with grade distribution,
+            cross-org image inventory, pin-discipline mix, and per-repo
+            drill-down maps.
+          </p>
+          <div class="card-meta">
+            <span class="card-chip">image dedup</span>
+            <span class="card-chip">pin-discipline %</span>
+            <span class="card-chip">drill-down</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="surface">
+    <div class="section-inner">
+      <div class="section-eyebrow">Capability snapshot</div>
+      <h2>What ships in the box.</h2>
+      <div class="stats">
+        <div class="stat">
+          <div class="stat-value">3</div>
+          <div class="stat-label">platforms supported</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">46</div>
+          <div class="stat-label">deterministic rules</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">17</div>
+          <div class="stat-label">built-in policies</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">4</div>
+          <div class="stat-label">output formats</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">5</div>
+          <div class="stat-label">MCP tools</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">8</div>
+          <div class="stat-label">inventory probes</div>
+        </div>
+      </div>
+
+      <h3 style="margin-top: 36px; color: var(--fg); text-transform: none; letter-spacing: 0; font-size: 17px;">
+        CLI verbs
+      </h3>
+      <div class="verbs">
+        <div class="verb">
+          <code>ciguard scan</code>
+          <div class="verb-desc">scan one pipeline file</div>
+        </div>
+        <div class="verb">
+          <code>ciguard scan-repo</code>
+          <div class="verb-desc">scan every pipeline in a repo</div>
+        </div>
+        <div class="verb">
+          <code>ciguard inventory</code>
+          <div class="verb-desc">live admin-API CI/CD inventory</div>
+        </div>
+        <div class="verb">
+          <code>ciguard topology</code>
+          <div class="verb-desc">cross-pipeline swimlane + verify</div>
+        </div>
+        <div class="verb">
+          <code>ciguard audit-org</code>
+          <div class="verb-desc">org-wide posture dashboard</div>
+        </div>
+        <div class="verb">
+          <code>ciguard mcp</code>
+          <div class="verb-desc">MCP server (stdio)</div>
+        </div>
+        <div class="verb">
+          <code>ciguard app</code>
+          <div class="verb-desc">GitHub App receiver</div>
+        </div>
+        <div class="verb">
+          <code>ciguard baseline</code>
+          <div class="verb-desc">seed baseline for delta scans</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="surface">
+    <div class="section-inner">
+      <div class="section-eyebrow">How it ships</div>
+      <h2>Install where it makes sense.</h2>
+
+      <div class="install">
+        <div class="install-tile">
+          <h3>PyPI (CLI)</h3>
+          <p>The Python CLI — drop into any developer machine or CI runner.</p>
+          <pre><code>pip install ciguard</code></pre>
+        </div>
+
+        <div class="install-tile">
+          <h3>PyPI (with MCP)</h3>
+          <p>Adds the stdio MCP server for Claude Desktop / Cursor / agentic clients.</p>
+          <pre><code>pip install 'ciguard[mcp]'</code></pre>
+        </div>
+
+        <div class="install-tile">
+          <h3>GHCR (Docker)</h3>
+          <p>Multi-arch image, Sigstore-signed, SBOM-attested every release.</p>
+          <pre><code>docker pull ghcr.io/jo-jo98/ciguard:latest</code></pre>
+        </div>
+
+        <div class="install-tile">
+          <h3>pre-commit</h3>
+          <p>Drop one hook in <code>.pre-commit-config.yaml</code> to scan changed pipeline files locally.</p>
+          <pre><code>repos:
+  - repo: https://github.com/Jo-Jo98/ciguard
+    rev: v0.10.0
+    hooks:
+      - id: ciguard-scan</code></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="surface">
+    <div class="section-inner">
+      <div class="section-eyebrow">Posture posture</div>
+      <h2>Built securely. Self-pentested.</h2>
+      <p class="muted">
+        ciguard ships its own supply-chain provenance: every release is
+        Sigstore-keyless-signed by digest on GHCR, attested with both
+        CycloneDX + SPDX SBOMs, and PyPI distributions carry PEP 740
+        attestations. Cycle 1 self-pentest closed 2026-04-27 with all
+        four findings fixed and verified; Cycle 2 is on the calendar.
+        Two complementary CodeQL + dogfood-SARIF lanes upload to GitHub
+        Code Scanning on every push.
+      </p>
+      <div class="cards">
+        <div class="card">
+          <h3>Sigstore signing</h3>
+          <p>Image digest signed via cosign keyless on every release. Verifiable with <code>cosign verify</code>.</p>
+        </div>
+        <div class="card">
+          <h3>SBOM attestations</h3>
+          <p>CycloneDX + SPDX attestations on the GHCR image; PEP 740 provenance on PyPI distributions.</p>
+        </div>
+        <div class="card">
+          <h3>Public Cycle 1 report</h3>
+          <p>Full pentest cycle with findings, exploits, fixes, and retest — published as part of the audit story.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="surface">
+    <div class="section-inner" style="text-align: center;">
+      <div class="section-eyebrow">Apache-2.0 · self-hosted · never phones home</div>
+      <h2>Pick a deliverable. Generate. Ship.</h2>
+      <p class="muted" style="margin-left: auto; margin-right: auto;">
+        ciguard is a single binary plus an optional MCP server. No SaaS dashboard, no telemetry,
+        no vendor account. The HTML files it writes are yours.
+      </p>
+      <div class="hero-cta" style="justify-content: center;">
+        <a class="btn btn-primary" href="https://github.com/Jo-Jo98/ciguard#readme">
+          Read the docs &rarr;
+        </a>
+        <a class="btn" href="https://github.com/Jo-Jo98/ciguard">
+          Star on GitHub
+        </a>
+      </div>
+    </div>
+  </section>
+</Base>

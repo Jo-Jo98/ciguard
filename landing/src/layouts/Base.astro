@@ -1,0 +1,85 @@
+---
+// Base page shell — head metadata + global styles + outer layout.
+// All page content slots into <main>. Footer + header are included
+// here so every page on ciguard.dev shares the same chrome.
+import "../styles/landing.css";
+
+interface Props {
+  title?: string;
+  description?: string;
+  canonicalPath?: string;
+}
+
+const {
+  title = "CIGuard — CI/CD pipeline security audit visualiser",
+  description = "Self-hosted CI/CD security audit tool. Single-file HTML deliverables for pipelines, infrastructure inventory, multi-environment topology, and org-wide posture. Apache-2.0.",
+  canonicalPath = "/",
+} = Astro.props;
+
+const canonical = `https://ciguard.dev${canonicalPath}`;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0a0a0a" />
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta name="twitter:card" content="summary" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="CIGuard home">
+        <span class="brand-mark">CI<span class="brand-g">G</span>uard</span>
+      </a>
+      <nav class="site-nav" aria-label="Primary">
+        <a href="https://github.com/Jo-Jo98/ciguard">GitHub</a>
+        <a href="https://pypi.org/project/ciguard/">PyPI</a>
+        <a href="https://github.com/Jo-Jo98/ciguard/blob/main/README.md">Docs</a>
+      </nav>
+    </header>
+
+    <main>
+      <slot />
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-grid">
+        <div>
+          <div class="brand-mark footer-mark">CI<span class="brand-g">G</span>uard</div>
+          <p class="muted">
+            CI/CD pipeline security audit visualiser. Self-hosted.
+            Apache-2.0.
+          </p>
+        </div>
+        <div>
+          <h3>Code</h3>
+          <ul>
+            <li><a href="https://github.com/Jo-Jo98/ciguard">GitHub</a></li>
+            <li><a href="https://pypi.org/project/ciguard/">PyPI</a></li>
+            <li><a href="https://github.com/Jo-Jo98/ciguard/pkgs/container/ciguard">GHCR</a></li>
+          </ul>
+        </div>
+        <div>
+          <h3>Project</h3>
+          <ul>
+            <li><a href="https://github.com/Jo-Jo98/ciguard/blob/main/README.md">README</a></li>
+            <li><a href="https://github.com/Jo-Jo98/ciguard/blob/main/CHANGELOG.md">Changelog</a></li>
+            <li><a href="https://github.com/Jo-Jo98/ciguard/security">Security</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer-baseline">
+        <span class="muted">© 2026 ciguard contributors. Brand mark: <code>CIGuard</code> (visual) · identifier: <code>ciguard</code> (PyPI / CLI / repo).</span>
+      </div>
+    </footer>
+  </body>
+</html>

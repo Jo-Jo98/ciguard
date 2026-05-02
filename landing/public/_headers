@@ -1,0 +1,15 @@
+# Cloudflare Pages security headers — applied to every served path.
+# Tighten later if we ever embed third-party content; today the page
+# is fully self-hosted (no external scripts, no analytics, no fonts).
+
+/*
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: interest-cohort=(), browsing-topics=()
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+
+# Hashed asset filenames are immutable — far-future cache.
+/_assets/*
+  Cache-Control: public, max-age=31536000, immutable
