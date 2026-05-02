@@ -181,6 +181,125 @@ def _repo_row(record: RepoScanRecord) -> str:
     )
 
 
+def _pin_discipline_panel(report: OrgAuditReport) -> str:
+    """Cross-org pin-discipline mix — % digest / tag / mutable across
+    every image reference in every scanned repo. Hidden when no images
+    were collected (org with no container references)."""
+    pd = report.pin_discipline
+    total = pd.get("total", 0)
+    if not total:
+        return ""
+    counts = pd.get("counts", {})
+    pct = pd.get("percentages", {})
+    bar_segments: List[str] = []
+    label_to_colour = {
+        "digest": "#22c55e",
+        "tag": "#f59e0b",
+        "mutable": "#ef4444",
+    }
+    for label in ("digest", "tag", "mutable"):
+        n = counts.get(label, 0)
+        if not n:
+            continue
+        share = pct.get(label, 0.0)
+        colour = label_to_colour[label]
+        bar_segments.append(
+            f'<div class="pd-segment" '
+            f'style="width:{share}%;background:{colour};" '
+            f'title="{label}: {n} ({share}%)"></div>'
+        )
+    legend_chips: List[str] = []
+    for label in ("digest", "tag", "mutable"):
+        n = counts.get(label, 0)
+        share = pct.get(label, 0.0)
+        colour = label_to_colour[label]
+        legend_chips.append(
+            f'<span class="dist-chip" style="border-color:{colour}50;">'
+            f'<strong style="color:{colour};">{share}%</strong> '
+            f'<span class="dist-label">{label}</span> '
+            f'<span class="muted">({n})</span></span>'
+        )
+    return (
+        '<section class="panel">'
+        f"<h2>Pin discipline ({total} image references)</h2>"
+        f'<div class="pd-bar">{"".join(bar_segments)}</div>'
+        f'<div class="dist-strip">{"".join(legend_chips)}</div>'
+        "</section>"
+    )
+
+
+def _image_inventory_panel(report: OrgAuditReport) -> str:
+    """Cross-org image inventory — one row per distinct image-name
+    with the count of repos using it, the distinct tag values seen,
+    and the pin-status mix. Inconsistencies (image-name with >1 tag
+    across the org) get a red badge — the headline differentiator
+    from the audit-scope spec."""
+    inventory = report.image_inventory
+    if not inventory:
+        return ""
+    inconsistencies = sum(
+        1 for entry in inventory if entry["distinct_tag_count"] > 1
+    )
+    rows: List[str] = []
+    for entry in inventory:
+        tags_html = ", ".join(
+            f'<code>{_html_escape(t)}</code>' for t in entry["tags"]
+        ) or '<span class="muted">none</span>'
+        pin = entry["pin_status_counts"]
+        pin_chips: List[str] = []
+        for label, colour in (
+            ("digest", "#22c55e"),
+            ("tag", "#f59e0b"),
+            ("mutable", "#ef4444"),
+        ):
+            n = pin.get(label, 0)
+            if n:
+                pin_chips.append(
+                    f'<span class="sev-chip" '
+                    f'style="color:{colour};border-color:{colour}40;">'
+                    f'{n} {label}</span>'
+                )
+        warning = ""
+        if entry["distinct_tag_count"] > 1:
+            warning = (
+                f'<span class="drift-kind danger">'
+                f'{entry["distinct_tag_count"]} variants</span>'
+            )
+        repos_summary = (
+            f'{entry["repo_count"]} repo'
+            + ('s' if entry["repo_count"] != 1 else '')
+        )
+        pin_html = " ".join(pin_chips) or '<span class="muted">&mdash;</span>'
+        rows.append(
+            "<tr>"
+            f"<td><code>{_html_escape(entry['name'])}</code> {warning}</td>"
+            f"<td>{repos_summary}</td>"
+            f"<td>{tags_html}</td>"
+            f"<td>{pin_html}</td>"
+            "</tr>"
+        )
+    headline = (
+        f"Image inventory ({len(inventory)} distinct image"
+        + ("s" if len(inventory) != 1 else "")
+        + (
+            f' — <span class="warning-text">{inconsistencies} '
+            "inconsistent</span>"
+            if inconsistencies else ""
+        )
+        + ")"
+    )
+    return (
+        '<section class="panel">'
+        f"<h2>{headline}</h2>"
+        '<table class="repos image-inventory">'
+        "<thead><tr>"
+        "<th>Image</th><th>Spread</th><th>Tags seen</th><th>Pin mix</th>"
+        "</tr></thead>"
+        f'<tbody>{"".join(rows)}</tbody>'
+        "</table></section>"
+    )
+
+
 def _errors_panel(report: OrgAuditReport) -> str:
     if not report.errors:
         return ""
@@ -272,6 +391,25 @@ table.repos tbody tr:last-child td { border-bottom: none; }
 .error-list code { font-size: 11px; }
 .error { color: #fca5a5; }
 
+/* Pin-discipline panel (Slice 17 session 2) */
+.pd-bar {
+  display: flex; height: 14px; border-radius: 7px;
+  overflow: hidden; background: #18181c;
+  border: 1px solid #27272a; margin-bottom: 8px;
+}
+.pd-segment { height: 100%; }
+
+/* Image inventory panel (Slice 17 session 2) */
+table.image-inventory td { vertical-align: top; }
+.drift-kind {
+  display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid; background: #18181c;
+  font-variant-numeric: tabular-nums; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em; margin-left: 6px;
+}
+.drift-kind.danger { color: #ef4444; border-color: rgba(239,68,68,0.4); }
+.warning-text { color: #ef4444; font-weight: 600; }
+
 @media print {
   body { background: #fff; color: #18181c; }
   table.repos { background: #fff; border-color: #e4e4e7; }
@@ -337,6 +475,9 @@ def render(report: OrgAuditReport) -> str:
 
   <h2>Platforms detected</h2>
   <div class="dist-strip">{_platforms_strip(report) or "<span class='muted'>no pipelines detected</span>"}</div>
+
+  {_pin_discipline_panel(report)}
+  {_image_inventory_panel(report)}
 
   <h2>Repos ({len(report.repos)})</h2>
   <table class="repos">

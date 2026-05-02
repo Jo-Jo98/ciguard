@@ -27,10 +27,11 @@ from __future__ import annotations
 import re
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 from ..models.org_audit import OrgAuditReport, RepoScanRecord
 from ..repo_scan import scan_repo
+from .images import extract_repo_images
 from .provider import OrgProvider, OrgProviderError
 
 
@@ -123,30 +124,40 @@ def audit_org(
             report.repos.append(record)
             continue
 
-        record.scan = _scan_repo_files(files, offline=offline)
+        scan_result, images = _scan_and_extract(files, offline=offline)
+        record.scan = scan_result
+        record.images = images
         report.repos.append(record)
 
     return report
 
 
-def _scan_repo_files(
+def _scan_and_extract(
     files: List[Any],            # PipelineFile, but typing-loose to keep the import surface tight
     *,
     offline: bool,
-) -> Dict[str, Any]:
-    """Materialise pipeline files into a tempdir and invoke `scan_repo()`.
-    Returns the same dict shape `scan_repo` always returns. The tempdir
-    is cleaned up on exit; per-finding evidence is captured in the
-    returned dict before the dir disappears."""
+) -> tuple:
+    """Materialise pipeline files into a tempdir, run `scan_repo()`,
+    and harvest the cross-org image inventory off the same tree
+    before the dir is cleaned up. Returns `(scan_dict, image_records)`.
+    """
     with tempfile.TemporaryDirectory(prefix="ciguard-audit-org-") as tmp:
         tmpdir = Path(tmp)
         for f in files:
             target = tmpdir / f.path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(f.content, encoding="utf-8")
-        return scan_repo(
+        scan_dict = scan_repo(
             tmpdir,
             offline=offline,
             fail_on=None,
             no_ignore_file=True,
         )
+        try:
+            image_records = extract_repo_images(tmpdir)
+        except Exception:
+            # Image extraction is best-effort — the scan path is the
+            # authoritative posture surface. A failure here shouldn't
+            # mask the rest of the audit.
+            image_records = []
+    return scan_dict, image_records

@@ -589,3 +589,254 @@ class TestOrgAuditHTML:
         org_audit_html.write_report(report, target)
         assert target.exists()
         assert target.read_text(encoding="utf-8").startswith("<!DOCTYPE html>")
+
+
+# ---------------------------------------------------------------------------
+# Image inventory aggregation (Slice 17 session 2)
+# ---------------------------------------------------------------------------
+
+
+class TestImageInventory:
+    def _record(self, repo, *images):
+        return RepoScanRecord(
+            repo=repo,
+            scan={
+                "files_scanned": 1, "total_findings": 0,
+                "by_severity": {sev: 0 for sev in
+                                ("Critical", "High", "Medium", "Low", "Info")},
+                "files": [],
+            },
+            images=list(images),
+        )
+
+    def _img(self, name, tag, pin_status, **extra):
+        return {
+            "raw": f"{name}:{tag}" if tag else name,
+            "name": name,
+            "tag": tag,
+            "cycle_id": None,
+            "digest": None,
+            "registry": None,
+            "pin_status": pin_status,
+            "file": ".github/workflows/ci.yml",
+            "platform": "github-actions",
+            "location": "job[build].container",
+            **extra,
+        }
+
+    def test_pin_discipline_percentages_round_to_one_decimal(self):
+        report = OrgAuditReport(
+            org="x",
+            repos=[
+                self._record("ex/a",
+                             self._img("python", "3.11", "tag"),
+                             self._img("python", "latest", "mutable")),
+                self._record("ex/b",
+                             self._img("redis", "7@sha256:abc", "digest"),
+                             self._img("redis", "latest", "mutable"),
+                             self._img("redis", "7", "tag")),
+            ],
+        )
+        pd = report.pin_discipline
+        assert pd["counts"] == {"digest": 1, "tag": 2, "mutable": 2}
+        assert pd["total"] == 5
+        assert pd["percentages"]["digest"] == 20.0
+        assert pd["percentages"]["tag"] == 40.0
+        assert pd["percentages"]["mutable"] == 40.0
+
+    def test_pin_discipline_zero_when_no_images(self):
+        report = OrgAuditReport(org="x", repos=[self._record("ex/a")])
+        pd = report.pin_discipline
+        assert pd["total"] == 0
+        assert pd["percentages"] == {"digest": 0.0, "tag": 0.0, "mutable": 0.0}
+
+    def test_image_inventory_dedupes_by_name(self):
+        report = OrgAuditReport(
+            org="x",
+            repos=[
+                self._record("ex/a", self._img("python", "3.11", "tag")),
+                self._record("ex/b", self._img("python", "3.10", "tag")),
+                self._record("ex/c", self._img("redis", "7", "tag")),
+            ],
+        )
+        inv = report.image_inventory
+        names = [e["name"] for e in inv]
+        assert names == ["python", "redis"]
+        py = next(e for e in inv if e["name"] == "python")
+        assert py["repo_count"] == 2
+        assert py["tags"] == ["3.10", "3.11"]
+        assert py["distinct_tag_count"] == 2
+
+    def test_image_inventory_sorted_by_repo_count_desc_then_name(self):
+        report = OrgAuditReport(
+            org="x",
+            repos=[
+                self._record("ex/a",
+                             self._img("python", "3.11", "tag"),
+                             self._img("redis", "7", "tag")),
+                self._record("ex/b",
+                             self._img("python", "3.10", "tag"),
+                             self._img("nginx", "1.25", "tag")),
+                self._record("ex/c", self._img("python", "3.9", "tag")),
+            ],
+        )
+        inv = report.image_inventory
+        assert [e["name"] for e in inv] == ["python", "nginx", "redis"]
+
+    def test_image_inconsistencies_only_returns_multi_tag_images(self):
+        report = OrgAuditReport(
+            org="x",
+            repos=[
+                self._record("ex/a", self._img("python", "3.11", "tag")),
+                self._record("ex/b", self._img("python", "3.10", "tag")),
+                self._record("ex/c", self._img("redis", "7", "tag")),
+                self._record("ex/d", self._img("redis", "7", "tag")),
+            ],
+        )
+        inc = report.image_inconsistencies
+        assert len(inc) == 1
+        assert inc[0]["name"] == "python"
+        assert inc[0]["distinct_tag_count"] == 2
+
+    def test_image_inventory_skips_anonymous_images(self):
+        # An image record without a `name` (parser couldn't resolve)
+        # shouldn't add an empty-string bucket to the inventory.
+        report = OrgAuditReport(
+            org="x",
+            repos=[
+                self._record("ex/a",
+                             self._img("python", "3.11", "tag"),
+                             {"name": "", "pin_status": "mutable"}),
+            ],
+        )
+        inv = report.image_inventory
+        assert [e["name"] for e in inv] == ["python"]
+
+    def test_total_image_references_sums_all_repos(self):
+        report = OrgAuditReport(
+            org="x",
+            repos=[
+                self._record("ex/a",
+                             self._img("python", "3.11", "tag"),
+                             self._img("redis", "7", "tag")),
+                self._record("ex/b", self._img("python", "3.10", "tag")),
+            ],
+        )
+        assert report.total_image_references == 3
+
+
+# ---------------------------------------------------------------------------
+# extract_repo_images integration (Slice 17 session 2)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractRepoImages:
+    def test_extracts_gitlab_image(self, tmp_path):
+        from ciguard.audit_org.images import extract_repo_images
+
+        (tmp_path / ".gitlab-ci.yml").write_text(
+            "stages: [build]\n"
+            "build-job:\n"
+            "  stage: build\n"
+            "  image: python:3.11.4\n"
+            "  script: [echo hi]\n",
+            encoding="utf-8",
+        )
+        records = extract_repo_images(tmp_path)
+        assert len(records) == 1
+        assert records[0]["name"] == "python"
+        assert records[0]["tag"] == "3.11.4"
+        assert records[0]["pin_status"] == "tag"
+        assert records[0]["platform"] == "gitlab-ci"
+
+    def test_classifies_mutable_tag_as_mutable(self, tmp_path):
+        from ciguard.audit_org.images import extract_repo_images
+
+        (tmp_path / ".gitlab-ci.yml").write_text(
+            "stages: [build]\n"
+            "build-job:\n"
+            "  stage: build\n"
+            "  image: redis:latest\n"
+            "  script: [echo hi]\n",
+            encoding="utf-8",
+        )
+        records = extract_repo_images(tmp_path)
+        assert records[0]["pin_status"] == "mutable"
+
+    def test_swallows_parse_errors(self, tmp_path):
+        from ciguard.audit_org.images import extract_repo_images
+
+        # Garbage YAML — parser raises; helper must not.
+        (tmp_path / ".gitlab-ci.yml").write_text(
+            "this is :: not :: valid:: yaml: : :\n"
+            "  - and: [unbalanced\n",
+            encoding="utf-8",
+        )
+        records = extract_repo_images(tmp_path)
+        # Empty list, no exception.
+        assert records == []
+
+
+# ---------------------------------------------------------------------------
+# HTML rendering of the new panels
+# ---------------------------------------------------------------------------
+
+
+class TestImagePanelsHTML:
+    def _img(self, name, tag, pin_status):
+        return {"name": name, "tag": tag, "pin_status": pin_status,
+                "raw": f"{name}:{tag}", "cycle_id": None,
+                "digest": None, "registry": None,
+                "file": "x", "platform": "gitlab-ci", "location": "y"}
+
+    def test_pin_discipline_panel_renders_when_images_present(self):
+        report = OrgAuditReport(
+            org="x",
+            repos=[
+                RepoScanRecord(
+                    repo="ex/a",
+                    images=[self._img("python", "3.11", "tag"),
+                            self._img("python", "latest", "mutable")],
+                ),
+            ],
+        )
+        out = org_audit_html.render(report)
+        assert "Pin discipline" in out
+        assert "50.0%" in out
+
+    def test_pin_discipline_panel_omitted_when_no_images(self):
+        report = OrgAuditReport(org="x", repos=[
+            RepoScanRecord(repo="ex/a"),
+        ])
+        out = org_audit_html.render(report)
+        assert "Pin discipline" not in out
+
+    def test_image_inventory_renders_inconsistency_warning(self):
+        report = OrgAuditReport(
+            org="x",
+            repos=[
+                RepoScanRecord(repo="ex/a",
+                               images=[self._img("python", "3.11", "tag")]),
+                RepoScanRecord(repo="ex/b",
+                               images=[self._img("python", "3.10", "tag")]),
+            ],
+        )
+        out = org_audit_html.render(report)
+        assert "Image inventory" in out
+        assert "1 inconsistent" in out
+        assert "2 variants" in out
+        assert "<code>python</code>" in out
+
+    def test_image_inventory_no_inconsistency_label_when_clean(self):
+        report = OrgAuditReport(
+            org="x",
+            repos=[
+                RepoScanRecord(repo="ex/a",
+                               images=[self._img("python", "3.11", "tag")]),
+                RepoScanRecord(repo="ex/b",
+                               images=[self._img("python", "3.11", "tag")]),
+            ],
+        )
+        out = org_audit_html.render(report)
+        assert "Image inventory" in out
+        assert "inconsistent" not in out

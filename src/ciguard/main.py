@@ -1055,6 +1055,39 @@ def _print_org_audit_summary(report, *, output_path: Optional[str]) -> None:
             lines.append(f"  {name}: {n}")
         lines.append("")
 
+    pd = report.pin_discipline
+    if pd.get("total", 0) > 0:
+        pct = pd.get("percentages", {})
+        lines.append(
+            f"{_BOLD}Pin discipline:{_RESET} "
+            f"{_GREEN}{pct.get('digest', 0)}% digest{_RESET} · "
+            f"{_YELLOW}{pct.get('tag', 0)}% tag{_RESET} · "
+            f"{_RED}{pct.get('mutable', 0)}% mutable{_RESET} "
+            f"({pd['total']} refs)"
+        )
+        lines.append("")
+
+        inventory = report.image_inventory
+        inconsistencies = report.image_inconsistencies
+        if inventory:
+            lines.append(
+                f"{_BOLD}Image inventory:{_RESET} "
+                f"{len(inventory)} distinct image(s)"
+                + (
+                    f" · {_RED}{len(inconsistencies)} with multiple "
+                    f"tag variants{_RESET}"
+                    if inconsistencies else ""
+                )
+            )
+            for entry in inconsistencies[:5]:
+                lines.append(
+                    f"  {entry['name']}: {entry['distinct_tag_count']} variants "
+                    f"across {entry['repo_count']} repo(s) "
+                    f"[{', '.join(entry['tags'][:6])}"
+                    f"{'...' if len(entry['tags']) > 6 else ''}]"
+                )
+            lines.append("")
+
     worst_first = sorted(
         (r for r in report.repos if r.total_findings > 0),
         key=lambda r: -r.total_findings,

@@ -52,6 +52,7 @@ class RepoScanRecord(BaseModel):
     scan: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     pipeline_file_count: int = 0   # how many CI files we found in the repo
+    images: List[Dict[str, Any]] = Field(default_factory=list)
 
     @property
     def total_findings(self) -> int:
@@ -145,3 +146,100 @@ class OrgAuditReport(BaseModel):
                     plat = f.get("platform") or "unknown"
                     out[plat] = out.get(plat, 0) + 1
         return out
+
+    @property
+    def total_image_references(self) -> int:
+        """Total image references seen across the org — the denominator
+        for the pin-discipline percentage."""
+        return sum(len(r.images) for r in self.repos)
+
+    @property
+    def pin_discipline(self) -> Dict[str, Any]:
+        """Cross-org pin-discipline mix. Returns absolute counts plus
+        a 1-decimal percentage for each category. Empty `images`
+        across the org → all zeros + percentages of 0.0 (caller
+        should hide the panel when total is zero rather than divide-
+        by-zeroing)."""
+        counts = {"digest": 0, "tag": 0, "mutable": 0}
+        for r in self.repos:
+            for img in r.images:
+                status = img.get("pin_status")
+                if status in counts:
+                    counts[status] += 1
+        total = sum(counts.values())
+        if total == 0:
+            return {"counts": counts, "total": 0,
+                    "percentages": {k: 0.0 for k in counts}}
+        return {
+            "counts": counts,
+            "total": total,
+            "percentages": {
+                k: round(v * 100 / total, 1) for k, v in counts.items()
+            },
+        }
+
+    @property
+    def image_inventory(self) -> List[Dict[str, Any]]:
+        """Cross-org image inventory aggregated by image-name. Returns
+        one record per distinct `name`, sorted by descending repo
+        count then ascending name. Each record carries the set of
+        repos using it, the set of distinct tag values seen, and a
+        per-pin-status breakdown — these are the inputs to the
+        'twelve different base images across fifty services' panel.
+
+        Image-name (e.g. `python`) is the dedup key, not the full
+        `image:tag` string, because the auditor's question is 'how
+        many flavours of python are we running' rather than 'how
+        many tag literals exist'."""
+        index: Dict[str, Dict[str, Any]] = {}
+        for r in self.repos:
+            for img in r.images:
+                name = img.get("name")
+                if not name:
+                    continue
+                rec = index.setdefault(name, {
+                    "name": name,
+                    "repos": set(),
+                    "tags": set(),
+                    "pin_status_counts": {"digest": 0, "tag": 0, "mutable": 0},
+                    "registries": set(),
+                    "total_references": 0,
+                })
+                rec["repos"].add(r.repo)
+                tag = img.get("tag")
+                if tag:
+                    rec["tags"].add(tag)
+                pin = img.get("pin_status")
+                if pin in rec["pin_status_counts"]:
+                    rec["pin_status_counts"][pin] += 1
+                registry = img.get("registry")
+                if registry:
+                    rec["registries"].add(registry)
+                rec["total_references"] += 1
+
+        # Materialise sets as sorted lists so the result is JSON-clean
+        # and stable for snapshot tests.
+        out: List[Dict[str, Any]] = []
+        for rec in index.values():
+            out.append({
+                "name": rec["name"],
+                "repos": sorted(rec["repos"]),
+                "repo_count": len(rec["repos"]),
+                "tags": sorted(rec["tags"]),
+                "distinct_tag_count": len(rec["tags"]),
+                "pin_status_counts": rec["pin_status_counts"],
+                "registries": sorted(rec["registries"]),
+                "total_references": rec["total_references"],
+            })
+        out.sort(key=lambda x: (-x["repo_count"], x["name"]))
+        return out
+
+    @property
+    def image_inconsistencies(self) -> List[Dict[str, Any]]:
+        """Subset of `image_inventory` where the org runs MORE THAN ONE
+        distinct tag for the same image-name — the 'twelve flavours of
+        python' callout. Sorted by `distinct_tag_count` desc."""
+        return [
+            entry for entry in self.image_inventory
+            if entry["distinct_tag_count"] > 1
+        ]
