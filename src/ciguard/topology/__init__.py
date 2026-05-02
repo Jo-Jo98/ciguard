@@ -12,6 +12,12 @@ Public surface today:
 - `discover(start)` — walk up from `start` looking for `ciguard.topology.yml`,
   same convention as `.ciguardignore`
 """
+from .aggregate import aggregate_scan_into_topology
 from .loader import discover, load, TopologyLoadError
 
-__all__ = ["TopologyLoadError", "discover", "load"]
+__all__ = [
+    "TopologyLoadError",
+    "aggregate_scan_into_topology",
+    "discover",
+    "load",
+]

@@ -711,10 +711,22 @@ def cmd_topology(args: argparse.Namespace) -> int:
         print(f"{_RED}Error:{_RESET} {exc}", file=sys.stderr)
         return 1
 
+    if getattr(args, "scan_output", None) and getattr(args, "scan_repo", None):
+        print(
+            f"{_RED}Error:{_RESET} pass either --scan-output OR --scan-repo, "
+            "not both.",
+            file=sys.stderr,
+        )
+        return 1
+
+    aggregate = _build_topology_aggregate(args, topology)
+
     if args.format == "json":
         import json as _json
-        payload = _json.dumps(topology.model_dump(mode="json", by_alias=True),
-                              indent=2, default=str)
+        payload_obj = topology.model_dump(mode="json", by_alias=True)
+        if aggregate is not None:
+            payload_obj["scan_aggregate"] = aggregate
+        payload = _json.dumps(payload_obj, indent=2, default=str)
         if args.output and args.output != "-":
             Path(args.output).write_text(payload + "\n", encoding="utf-8")
         else:
@@ -724,14 +736,55 @@ def cmd_topology(args: argparse.Namespace) -> int:
     if args.format == "html":
         from ciguard.reporter import topology_html
         if args.output and args.output != "-":
-            topology_html.write_report(topology, Path(args.output))
+            topology_html.write_report(topology, Path(args.output), aggregate=aggregate)
             print(f"Topology HTML written to {args.output}")
         else:
-            print(topology_html.render(topology), end="")
+            print(topology_html.render(topology, aggregate=aggregate), end="")
         return 0
 
     _print_topology_summary(topology, source=path, output_path=args.output)
     return 0
+
+
+def _build_topology_aggregate(args, topology) -> Optional[dict]:
+    """Resolve --scan-output / --scan-repo into a `scan_result` dict and
+    aggregate it against the topology. Returns None when neither flag
+    is set. Errors print to stderr and return None — the topology
+    render still happens, just without the overlay (degrading
+    gracefully rather than failing the whole operation)."""
+    import json as _json
+    from ciguard.topology import aggregate_scan_into_topology
+
+    scan_result: Optional[dict] = None
+    if getattr(args, "scan_output", None):
+        try:
+            scan_result = _json.loads(Path(args.scan_output).read_text(encoding="utf-8"))
+        except (OSError, _json.JSONDecodeError) as exc:
+            print(
+                f"{_YELLOW}Warning:{_RESET} could not read scan output "
+                f"{args.scan_output!r}: {exc}. Rendering without overlay.",
+                file=sys.stderr,
+            )
+            return None
+    elif getattr(args, "scan_repo", None):
+        from ciguard.repo_scan import scan_repo as _scan_repo
+        try:
+            scan_result = _scan_repo(
+                Path(args.scan_repo).expanduser(),
+                offline=False,
+                fail_on=None,
+                no_ignore_file=False,
+            )
+        except Exception as exc:
+            print(
+                f"{_YELLOW}Warning:{_RESET} scan-repo against "
+                f"{args.scan_repo!r} failed: {exc}. Rendering without overlay.",
+                file=sys.stderr,
+            )
+            return None
+    if scan_result is None:
+        return None
+    return aggregate_scan_into_topology(topology, scan_result)
 
 
 def _print_topology_summary(topology, *, source: Path, output_path: Optional[str]) -> None:
@@ -1158,6 +1211,22 @@ def main() -> int:
     topology_parser.add_argument(
         "--output", "-o", default=None,
         help="Where to write the output. `-` (default) writes to stdout.",
+    )
+    topology_parser.add_argument(
+        "--scan-output", default=None,
+        help="Path to a `ciguard scan-repo --output` JSON file. When set, "
+             "the topology renderer overlays per-environment + per-edge "
+             "severity counts on the swimlane and emits a drift panel "
+             "showing asserted-vs-actual mismatches. Compose with: "
+             "`ciguard scan-repo . --output scan.json && ciguard topology "
+             "--scan-output scan.json --format html --output topology.html`.",
+    )
+    topology_parser.add_argument(
+        "--scan-repo", default=None,
+        help="Convenience: run `scan-repo` against this directory and use "
+             "its output for the overlay. Equivalent to `--scan-output` "
+             "with an intermediate JSON file. Mutually exclusive with "
+             "`--scan-output`.",
     )
 
     args = parser.parse_args()

@@ -69,6 +69,18 @@ _KNOWN_GATES = {
 
 _PROD_TIERS = {"production", "prod", "live"}
 
+# Severity → CSS variable / chip colour. Mirrors the per-pipeline visualiser
+# palette so the same severity reads the same colour across all three
+# audit-deliverable pages (visualiser, inventory, topology).
+_SEV_COLOURS = {
+    "Critical": "#ef4444",
+    "High":     "#f97316",
+    "Medium":   "#f59e0b",
+    "Low":      "#22c55e",
+    "Info":     "#6366f1",
+}
+_SEV_ORDER = ("Critical", "High", "Medium", "Low", "Info")
+
 
 # ---------------------------------------------------------------------------
 # HTML escaping (kept local, mirrors the inventory_html helper)
@@ -140,7 +152,28 @@ def _gate_chips(gates: Sequence[str]) -> str:
     return " ".join(_gate_chip(g) for g in gates)
 
 
-def _deploy_cell(edge: Optional[DeployEdge], env_is_prod: bool) -> str:
+def _severity_chips(counts: dict) -> str:
+    """Render a row of compact severity chips for a `{Critical: N, ...}`
+    counts dict. Skips severities at zero so the cell stays compact."""
+    chips: List[str] = []
+    for sev in _SEV_ORDER:
+        n = int(counts.get(sev, 0) or 0)
+        if not n:
+            continue
+        colour = _SEV_COLOURS[sev]
+        chips.append(
+            f'<span class="sev-chip" style="color:{colour};border-color:{colour}40;">'
+            f'{n} {sev[0]}</span>'
+        )
+    return " ".join(chips)
+
+
+def _deploy_cell(
+    edge: Optional[DeployEdge],
+    env_is_prod: bool,
+    *,
+    edge_overlay: Optional[dict] = None,
+) -> str:
     if edge is None:
         return '<td class="cell empty">&mdash;</td>'
     danger = env_is_prod and not edge.gates
@@ -149,15 +182,22 @@ def _deploy_cell(edge: Optional[DeployEdge], env_is_prod: bool) -> str:
         f'<div class="pipeline-path">{_html_escape(edge.pipeline)}</div>'
         if edge.pipeline else ""
     )
+    overlay_html = ""
+    if edge_overlay is not None and edge_overlay.get("total", 0) > 0:
+        chips = _severity_chips(edge_overlay)
+        overlay_html = f'<div class="findings">{chips}</div>'
+    elif edge_overlay is not None:
+        overlay_html = '<div class="findings clean">clean</div>'
     return (
         f'<td class="{cell_class}">'
         f'<div class="gates">{_gate_chips(edge.gates)}</div>'
         f"{pipeline_html}"
+        f"{overlay_html}"
         '</td>'
     )
 
 
-def _env_header_cell(env: Environment) -> str:
+def _env_header_cell(env: Environment, *, env_overlay: Optional[dict] = None) -> str:
     tier = (env.tier or "").lower()
     is_prod = tier in _PROD_TIERS
     klass = "env-header prod" if is_prod else "env-header"
@@ -169,10 +209,15 @@ def _env_header_cell(env: Environment) -> str:
         f'<div class="env-tier">{_html_escape(env.tier)}</div>'
         if env.tier else ""
     )
+    overlay_html = ""
+    if env_overlay is not None and env_overlay.get("total", 0) > 0:
+        overlay_html = (
+            f'<div class="env-totals">{_severity_chips(env_overlay)}</div>'
+        )
     return (
         f'<th class="{klass}">'
         f'<div class="env-id">{_html_escape(env.id)}</div>'
-        f"{tier_html}{region}"
+        f"{tier_html}{region}{overlay_html}"
         '</th>'
     )
 
@@ -212,15 +257,21 @@ def _transition_row(envs: Sequence[Environment], transitions: Sequence[EnvTransi
     return f'<tr class="trans-row">{"".join(cells)}</tr>'
 
 
-def _swimlane_table(topology: Topology) -> str:
+def _swimlane_table(topology: Topology, aggregate: Optional[dict] = None) -> str:
     envs = _ordered_environments(topology.environments)
     services = _services_with_edges(topology)
     if not envs or not services:
         return '<p class="empty">No deploy edges to render.</p>'
 
     edge_map = _edge_lookup(topology.deploy_edges)
+    by_env = (aggregate or {}).get("by_env", {}) or {}
+    by_edge = (aggregate or {}).get("by_edge", {}) or {}
+    aggregate_present = aggregate is not None
 
-    header = "".join(_env_header_cell(e) for e in envs)
+    header = "".join(
+        _env_header_cell(e, env_overlay=by_env.get(e.id) if aggregate_present else None)
+        for e in envs
+    )
     head = (
         f'<thead><tr><th class="service-corner">service</th>{header}</tr>'
         f"{_transition_row(envs, topology.transitions)}</thead>"
@@ -232,6 +283,11 @@ def _swimlane_table(topology: Topology) -> str:
             _deploy_cell(
                 edge_map.get((svc.id, env.id)),
                 env_is_prod=(env.tier or "").lower() in _PROD_TIERS,
+                edge_overlay=(
+                    by_edge.get(f"{svc.id}::{env.id}")
+                    if aggregate_present and edge_map.get((svc.id, env.id)) is not None
+                    else None
+                ),
             )
             for env in envs
         )
@@ -322,6 +378,45 @@ def _network_panel(topology: Topology) -> str:
         '</tr></thead><tbody>'
         + "".join(rows)
         + '</tbody></table></section>'
+    )
+
+
+def _drift_panel(aggregate: Optional[dict]) -> str:
+    """When a scan-repo aggregate is overlaid, surface the drift between
+    asserted topology and actual scanned files. Two lists matter:
+    asserted pipelines that aren't present (renamed / deleted) and
+    scanned pipelines that no DeployEdge claims (orphan workflows).
+    Both are auditor-relevant — silence is suspicious."""
+    if not aggregate:
+        return ""
+    unmatched_pipelines = aggregate.get("unmatched_pipelines") or []
+    unmatched_files = aggregate.get("unmatched_files") or []
+    if not unmatched_pipelines and not unmatched_files:
+        return ""
+    sections: List[str] = []
+    if unmatched_pipelines:
+        items = "".join(
+            f'<li><code>{_html_escape(p)}</code></li>'
+            for p in unmatched_pipelines
+        )
+        sections.append(
+            "<div><strong>Asserted pipelines not found by scan-repo "
+            f"({len(unmatched_pipelines)}):</strong>"
+            f"<ul>{items}</ul></div>"
+        )
+    if unmatched_files:
+        items = "".join(
+            f'<li><code>{_html_escape(p)}</code></li>'
+            for p in unmatched_files
+        )
+        sections.append(
+            "<div><strong>Scanned pipelines with no DeployEdge "
+            f"({len(unmatched_files)}):</strong>"
+            f"<ul>{items}</ul></div>"
+        )
+    return (
+        '<section class="panel"><h2>Drift between asserted topology and scan</h2>'
+        '<div class="drift-panel">' + "".join(sections) + '</div></section>'
     )
 
 
@@ -448,6 +543,21 @@ table.ledger tbody tr:last-child td { border-bottom: none; }
 
 .empty { color: #a1a1aa; text-align: center; padding: 32px; }
 
+/* Scan-aggregate overlay (Slice 16 session 3) */
+.findings { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.findings.clean { color: #22c55e; font-size: 10px; text-transform: uppercase;
+                  letter-spacing: 0.06em; opacity: 0.7; }
+.sev-chip {
+  display: inline-block; font-size: 10px; padding: 2px 7px; border-radius: 999px;
+  border: 1px solid; background: #18181c;
+  font-variant-numeric: tabular-nums; font-weight: 600;
+}
+.env-totals { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.drift-panel { display: flex; flex-direction: column; gap: 12px; }
+.drift-panel ul { margin: 6px 0 0; padding-left: 20px; color: #a1a1aa;
+                  font-size: 12px; }
+.drift-panel code { font-size: 11px; }
+
 @media print {
   body { background: #fff; color: #18181c; }
   table.swimlane, table.ledger { background: #fff; border-color: #e4e4e7; }
@@ -468,16 +578,24 @@ table.ledger tbody tr:last-child td { border-bottom: none; }
 """
 
 
-def render(topology: Topology) -> str:
-    """Build the self-contained topology HTML document."""
-    summary = (
-        f"{len(topology.services)} services &middot; "
-        f"{len(topology.environments)} environments &middot; "
-        f"{len(topology.deploy_edges)} deploy edges &middot; "
-        f"{len(topology.transitions)} transitions &middot; "
-        f"{len(topology.secret_scopes)} secret scopes &middot; "
-        f"{len(topology.network_segments)} network segments"
-    )
+def render(topology: Topology, aggregate: Optional[dict] = None) -> str:
+    """Build the self-contained topology HTML document. When `aggregate`
+    is passed (output of `aggregate_scan_into_topology()`), each
+    swimlane cell is overlaid with severity chips for the matching
+    pipeline + each environment header gets a totals strip + a drift
+    panel surfaces asserted-vs-actual mismatches."""
+    summary_bits = [
+        f"{len(topology.services)} services",
+        f"{len(topology.environments)} environments",
+        f"{len(topology.deploy_edges)} deploy edges",
+        f"{len(topology.transitions)} transitions",
+        f"{len(topology.secret_scopes)} secret scopes",
+        f"{len(topology.network_segments)} network segments",
+    ]
+    if aggregate is not None:
+        total = sum(env.get("total", 0) for env in aggregate.get("by_env", {}).values())
+        summary_bits.append(f"{total} matched findings (scan overlay)")
+    summary = " &middot; ".join(summary_bits)
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -490,7 +608,8 @@ def render(topology: Topology) -> str:
   <h1>ciguard topology</h1>
   <div class="meta">{summary}</div>
   {_gateless_warnings(topology)}
-  {_swimlane_table(topology)}
+  {_swimlane_table(topology, aggregate)}
+  {_drift_panel(aggregate)}
   {_secret_scopes_panel(topology)}
   {_network_panel(topology)}
 </body>
@@ -498,8 +617,12 @@ def render(topology: Topology) -> str:
 """
 
 
-def write_report(topology: Topology, output_path: Path) -> Path:
+def write_report(
+    topology: Topology,
+    output_path: Path,
+    aggregate: Optional[dict] = None,
+) -> Path:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(render(topology), encoding="utf-8")
+    output_path.write_text(render(topology, aggregate), encoding="utf-8")
     return output_path

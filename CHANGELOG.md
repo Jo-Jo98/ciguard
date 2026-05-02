@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Slice 16 session 3 (cross-pipeline scan overlay)
+
+- **`ciguard topology --scan-output <json>`** — pair a `scan-repo` aggregate with the topology to overlay per-environment + per-(service, env) severity chips on the swimlane HTML page. Every cell that maps to a scanned pipeline gets compact severity chips (`1 C`, `2 H`, `1 L` ...); each environment header carries per-environment totals across every pipeline that deploys to that env. Cells with zero findings get a small `clean` marker so the operator can distinguish "scanned and clean" from "no scan data".
+- **`ciguard topology --scan-repo <path>`** — convenience flag that runs `scan-repo` internally and feeds the result. Mutually exclusive with `--scan-output`. Errors degrade gracefully: failure to read the scan output / failure of the internal scan-repo prints a warning and renders without the overlay rather than failing the whole operation.
+- **Drift panel** added to the topology HTML page — surfaces asserted-vs-actual mismatches: pipelines the topology declares but `scan-repo` didn't find (renames / deletions) AND scanned pipelines that no `DeployEdge` claims (orphan workflows). Both are auditor-relevant. Panel is omitted entirely when the asserted topology and the scanned files are perfectly aligned.
+- **New aggregator module** at `src/ciguard/topology/aggregate.py` — pure function `aggregate_scan_into_topology(topology, scan_result) -> dict` returning `{by_env, by_edge, unmatched_pipelines, unmatched_files}`. Composite keys serialise as `"<service>::<env>"` so the result is JSON-clean. `--format json` now embeds this under `scan_aggregate` when an overlay was requested.
+- **Test count: 856 → 874 (+18)** — 14 aggregator tests covering per-edge counts, per-env totals, drift detection, shared-pipeline edge cases, empty inputs; plus 8 HTML overlay tests covering severity chip rendering, env-header totals, summary line, clean-cell marker, drift panel presence/absence, backwards-compat with `aggregate=None`.
+
 ### Added — Slice 16 session 2 (topology HTML swimlane reporter)
 
 - **`ciguard topology --format html --output topology.html`** — self-contained dark-mode swimlane page rendering the cross-pipeline graph: services × environments grid with promotion-transition arrows showing which gates protect each step, plus secret-scope blast-radius and network-reachability panels. Same visual vocabulary as `inventory_html.py` and `html_interactive.py` so the audit deliverables are coherent. Print-friendly via `@media print`. Pure function in new `src/ciguard/reporter/topology_html.py` — no JavaScript, no dependencies, unit-tested on the rendered string.

@@ -363,6 +363,18 @@ ciguard topology --format html --output topology.html     # standalone audit del
 
 The HTML view is a swimlane grid (services × environments) with promotion-transition arrows showing which gates protect each step, plus secret-scope blast-radius and network-reachability panels. Production-tier columns are highlighted; gateless deploys to production AND gateless transitions into production tier render in a top-of-page red warnings banner so the auditor sees the worst posture issues without scrolling. Print-friendly via `@media print` so it exports cleanly to PDF.
 
+**Cross-pipeline scan overlay** — pair the topology with `scan-repo` output to overlay severity counts on every cell:
+
+```bash
+ciguard scan-repo . --output scan.json
+ciguard topology --scan-output scan.json --format html --output topology.html
+
+# Or one-shot — runs scan-repo internally:
+ciguard topology --scan-repo . --format html --output topology.html
+```
+
+Each (service, env) cell gets compact severity chips (`1 C`, `2 H`, `1 L`...) summarising that pipeline's findings; environment headers carry per-environment totals across every pipeline that deploys to that env. A drift panel surfaces asserted-vs-actual mismatches: pipelines the topology declares but `scan-repo` didn't find (renamed / deleted) and pipelines `scan-repo` did find that no DeployEdge claims (orphan workflows). Both are auditor-relevant.
+
 Minimal example:
 
 ```yaml
