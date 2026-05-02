@@ -14,10 +14,30 @@ Public surface today:
 """
 from .aggregate import aggregate_scan_into_topology
 from .loader import discover, load, TopologyLoadError
+from .verify import (
+    DriftRecord,
+    GitHubProvider,
+    LiveBranchProtection,
+    LiveEnvironment,
+    Provider,
+    ProviderError,
+    RepoSnapshot,
+    github_provider_from_env,
+    verify_topology,
+)
 
 __all__ = [
+    "DriftRecord",
+    "GitHubProvider",
+    "LiveBranchProtection",
+    "LiveEnvironment",
+    "Provider",
+    "ProviderError",
+    "RepoSnapshot",
     "TopologyLoadError",
     "aggregate_scan_into_topology",
     "discover",
+    "github_provider_from_env",
     "load",
+    "verify_topology",
 ]

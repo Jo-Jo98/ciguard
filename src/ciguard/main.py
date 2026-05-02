@@ -720,12 +720,17 @@ def cmd_topology(args: argparse.Namespace) -> int:
         return 1
 
     aggregate = _build_topology_aggregate(args, topology)
+    verification = _build_topology_verification(args, topology)
+    if verification is False:
+        return 1
 
     if args.format == "json":
         import json as _json
         payload_obj = topology.model_dump(mode="json", by_alias=True)
         if aggregate is not None:
             payload_obj["scan_aggregate"] = aggregate
+        if verification is not None:
+            payload_obj["verification"] = verification
         payload = _json.dumps(payload_obj, indent=2, default=str)
         if args.output and args.output != "-":
             Path(args.output).write_text(payload + "\n", encoding="utf-8")
@@ -736,13 +741,23 @@ def cmd_topology(args: argparse.Namespace) -> int:
     if args.format == "html":
         from ciguard.reporter import topology_html
         if args.output and args.output != "-":
-            topology_html.write_report(topology, Path(args.output), aggregate=aggregate)
+            topology_html.write_report(
+                topology, Path(args.output),
+                aggregate=aggregate, verification=verification,
+            )
             print(f"Topology HTML written to {args.output}")
         else:
-            print(topology_html.render(topology, aggregate=aggregate), end="")
+            print(
+                topology_html.render(
+                    topology, aggregate=aggregate, verification=verification,
+                ),
+                end="",
+            )
         return 0
 
-    _print_topology_summary(topology, source=path, output_path=args.output)
+    _print_topology_summary(
+        topology, source=path, output_path=args.output, verification=verification,
+    )
     return 0
 
 
@@ -787,7 +802,42 @@ def _build_topology_aggregate(args, topology) -> Optional[dict]:
     return aggregate_scan_into_topology(topology, scan_result)
 
 
-def _print_topology_summary(topology, *, source: Path, output_path: Optional[str]) -> None:
+def _build_topology_verification(args, topology):
+    """Resolve --verify into a verification dict by calling the GitHub
+    provider once per service repo. Returns None when --verify wasn't
+    set, the result dict on success, or False when the operator passed
+    --verify but no token is set (the CLI returns a non-zero exit so
+    the operator can wire CI for live-drift checks)."""
+    if not getattr(args, "verify", False):
+        return None
+    from ciguard.topology import github_provider_from_env, verify_topology
+
+    provider = github_provider_from_env()
+    if provider is None:
+        print(
+            f"{_RED}Error:{_RESET} `--verify` requires CIGUARD_GITHUB_TOKEN. "
+            "Set a PAT (or fine-grained token) with `repo` + `read:org` "
+            "scope and re-run.",
+            file=sys.stderr,
+        )
+        return False
+    try:
+        return verify_topology(topology, provider)
+    except Exception as exc:  # pragma: no cover — defensive guard
+        print(
+            f"{_YELLOW}Warning:{_RESET} verification failed: {exc}. "
+            "Rendering topology without live drift overlay.",
+            file=sys.stderr,
+        )
+        return None
+
+
+def _print_topology_summary(
+    topology, *,
+    source: Path,
+    output_path: Optional[str],
+    verification: Optional[dict] = None,
+) -> None:
     """Render a posture-focused text summary. Calls out the auditor
     questions the topology spec answers: deploy targets, gateless
     promotions, secret-scope blast radius, network reachability."""
@@ -842,6 +892,32 @@ def _print_topology_summary(topology, *, source: Path, output_path: Optional[str
                 reach = []
             label = ", ".join(reach) if reach else f"{_DIM}isolated{_RESET}"
             lines.append(f"  {seg.id} → {label}")
+        lines.append("")
+
+    if verification is not None:
+        drift = verification.get("drift") or []
+        unverifiable = verification.get("unverifiable") or []
+        repos = list((verification.get("by_repo") or {}).keys())
+        lines.append(f"{_BOLD}Live verification (GitHub):{_RESET}")
+        lines.append(
+            f"  {len(repos)} repo(s) checked, "
+            f"{len(drift)} drift record(s), "
+            f"{len(unverifiable)} unverifiable edge(s)"
+        )
+        if drift:
+            for d in drift:
+                kind = d.get("kind", "drift")
+                colour = _RED if kind in {"environment-not-found", "gate-not-actual"} else _YELLOW
+                lines.append(
+                    f"  {colour}{kind}{_RESET}: {d.get('service')} → "
+                    f"{d.get('environment')} — {d.get('detail')}"
+                )
+        if unverifiable:
+            for u in unverifiable:
+                lines.append(
+                    f"  {_DIM}unverifiable{_RESET}: {u.get('service')} → "
+                    f"{u.get('environment', '?')} — {u.get('reason')}"
+                )
         lines.append("")
 
     output = "\n".join(lines) + "\n"
@@ -1227,6 +1303,16 @@ def main() -> int:
              "its output for the overlay. Equivalent to `--scan-output` "
              "with an intermediate JSON file. Mutually exclusive with "
              "`--scan-output`.",
+    )
+    topology_parser.add_argument(
+        "--verify", action="store_true", default=False,
+        help="Cross-check the asserted topology against the live SCM "
+             "platform. Reads each Service.repo, calls the platform's "
+             "deployment-environments + branch-protection APIs, surfaces "
+             "drift between asserted and actual gates. Requires "
+             "CIGUARD_GITHUB_TOKEN; honours CIGUARD_GITHUB_API_URL for "
+             "GitHub Enterprise. Renders into the HTML drift panel + "
+             "JSON `verification` field + the text summary.",
     )
 
     args = parser.parse_args()

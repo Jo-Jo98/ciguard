@@ -378,6 +378,124 @@ def _network_panel(topology: Topology) -> str:
     )
 
 
+def _verify_panel(verification: Optional[dict]) -> str:
+    """Live-API drift panel (Slice 16, session 4). Surfaces three drift
+    kinds returned by `verify_topology`:
+
+      - `environment-not-found` (red): asserted env doesn't exist
+      - `gate-not-actual` (red): asserted gate not present on live env
+      - `gate-actual-not-asserted` (yellow): live gate not asserted
+
+    Plus a per-repo summary row showing what the live snapshot looks
+    like, and an `unverifiable` list for edges that couldn't be
+    checked (no repo set, API failure, etc.). Renders nothing when
+    verification is None or fully clean."""
+    if not verification:
+        return ""
+    drift = verification.get("drift") or []
+    by_repo = verification.get("by_repo") or {}
+    unverifiable = verification.get("unverifiable") or []
+    if not drift and not by_repo and not unverifiable:
+        return ""
+
+    sections: List[str] = []
+
+    if drift:
+        rows: List[str] = []
+        for d in drift:
+            kind = d.get("kind", "drift")
+            kind_class = {
+                "environment-not-found": "drift-kind danger",
+                "gate-not-actual": "drift-kind danger",
+                "gate-actual-not-asserted": "drift-kind warning",
+            }.get(kind, "drift-kind")
+            asserted = ", ".join(d.get("asserted_gates") or []) or "—"
+            actual = ", ".join(d.get("actual_gates") or []) or "—"
+            rows.append(
+                "<tr>"
+                f'<td><span class="{kind_class}">{_html_escape(kind)}</span></td>'
+                f"<td><code>{_html_escape(d.get('service'))}</code></td>"
+                f"<td><code>{_html_escape(d.get('environment'))}</code></td>"
+                f"<td>{_html_escape(asserted)}</td>"
+                f"<td>{_html_escape(actual)}</td>"
+                f"<td>{_html_escape(d.get('detail'))}</td>"
+                "</tr>"
+            )
+        sections.append(
+            "<div><strong>Drift between asserted topology and live platform "
+            f"({len(drift)}):</strong>"
+            '<table class="ledger drift-table"><thead><tr>'
+            "<th>kind</th><th>service</th><th>environment</th>"
+            "<th>asserted gates</th><th>actual gates</th><th>detail</th>"
+            "</tr></thead><tbody>"
+            + "".join(rows)
+            + "</tbody></table></div>"
+        )
+
+    if by_repo:
+        rows = []
+        for repo, snap in sorted(by_repo.items()):
+            envs = snap.get("environments") or []
+            err = snap.get("error")
+            env_html = (
+                ", ".join(
+                    f'<code>{_html_escape(e.get("name"))}</code>'
+                    for e in envs
+                ) if envs else '<span class="muted">none</span>'
+            )
+            bp = snap.get("branch_protection")
+            if bp:
+                bp_rules = ", ".join(bp.get("rules") or []) or "—"
+                bp_html = (
+                    f'<code>{_html_escape(bp.get("branch"))}</code>: '
+                    f'{_html_escape(bp_rules)}'
+                )
+            else:
+                bp_html = '<span class="muted">none</span>'
+            err_html = (
+                f'<span class="drift-kind danger">{_html_escape(err)}</span>'
+                if err else '<span class="muted">ok</span>'
+            )
+            rows.append(
+                "<tr>"
+                f"<td><code>{_html_escape(repo)}</code></td>"
+                f"<td>{env_html}</td>"
+                f"<td>{bp_html}</td>"
+                f"<td>{err_html}</td>"
+                "</tr>"
+            )
+        sections.append(
+            "<div><strong>Live snapshot per repo "
+            f"({len(by_repo)}):</strong>"
+            '<table class="ledger"><thead><tr>'
+            "<th>repo</th><th>environments</th>"
+            "<th>default-branch protection</th><th>status</th>"
+            "</tr></thead><tbody>"
+            + "".join(rows)
+            + "</tbody></table></div>"
+        )
+
+    if unverifiable:
+        items = "".join(
+            "<li>"
+            f"<code>{_html_escape(u.get('service'))}</code> &rarr; "
+            f"<code>{_html_escape(u.get('environment'))}</code> — "
+            f"{_html_escape(u.get('reason'))}"
+            "</li>"
+            for u in unverifiable
+        )
+        sections.append(
+            "<div><strong>Unverifiable deploy edges "
+            f"({len(unverifiable)}):</strong><ul>{items}</ul></div>"
+        )
+
+    return (
+        '<section class="panel">'
+        "<h2>Live verification</h2>"
+        '<div class="drift-panel">' + "".join(sections) + "</div></section>"
+    )
+
+
 def _drift_panel(aggregate: Optional[dict]) -> str:
     """When a scan-repo aggregate is overlaid, surface the drift between
     asserted topology and actual scanned files. Two lists matter:
@@ -554,6 +672,16 @@ table.ledger tbody tr:last-child td { border-bottom: none; }
 .drift-panel ul { margin: 6px 0 0; padding-left: 20px; color: #a1a1aa;
                   font-size: 12px; }
 .drift-panel code { font-size: 11px; }
+.drift-kind {
+  display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid; background: #18181c;
+  font-variant-numeric: tabular-nums; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.drift-kind.danger { color: #ef4444; border-color: rgba(239,68,68,0.4); }
+.drift-kind.warning { color: #f59e0b; border-color: rgba(245,158,11,0.4); }
+table.drift-table { font-size: 12px; }
+table.drift-table td { vertical-align: top; }
 
 @media print {
   body { background: #fff; color: #18181c; }
@@ -575,12 +703,19 @@ table.ledger tbody tr:last-child td { border-bottom: none; }
 """
 
 
-def render(topology: Topology, aggregate: Optional[dict] = None) -> str:
+def render(
+    topology: Topology,
+    aggregate: Optional[dict] = None,
+    verification: Optional[dict] = None,
+) -> str:
     """Build the self-contained topology HTML document. When `aggregate`
     is passed (output of `aggregate_scan_into_topology()`), each
     swimlane cell is overlaid with severity chips for the matching
     pipeline + each environment header gets a totals strip + a drift
-    panel surfaces asserted-vs-actual mismatches."""
+    panel surfaces asserted-vs-actual mismatches. When `verification`
+    is passed (output of `verify_topology()`), an additional 'Live
+    verification' panel surfaces gate drift between the asserted
+    topology and the live SCM platform."""
     summary_bits = [
         f"{len(topology.services)} services",
         f"{len(topology.environments)} environments",
@@ -592,6 +727,12 @@ def render(topology: Topology, aggregate: Optional[dict] = None) -> str:
     if aggregate is not None:
         total = sum(env.get("total", 0) for env in aggregate.get("by_env", {}).values())
         summary_bits.append(f"{total} matched findings (scan overlay)")
+    if verification is not None:
+        n_drift = len(verification.get("drift") or [])
+        n_repos = len(verification.get("by_repo") or {})
+        summary_bits.append(
+            f"{n_drift} live drift record(s) across {n_repos} repo(s)"
+        )
     summary = " &middot; ".join(summary_bits)
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -607,6 +748,7 @@ def render(topology: Topology, aggregate: Optional[dict] = None) -> str:
   {_gateless_warnings(topology)}
   {_swimlane_table(topology, aggregate)}
   {_drift_panel(aggregate)}
+  {_verify_panel(verification)}
   {_secret_scopes_panel(topology)}
   {_network_panel(topology)}
 </body>
@@ -618,8 +760,12 @@ def write_report(
     topology: Topology,
     output_path: Path,
     aggregate: Optional[dict] = None,
+    verification: Optional[dict] = None,
 ) -> Path:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(render(topology, aggregate), encoding="utf-8")
+    output_path.write_text(
+        render(topology, aggregate, verification),
+        encoding="utf-8",
+    )
     return output_path

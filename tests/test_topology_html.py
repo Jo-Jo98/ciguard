@@ -408,3 +408,147 @@ class TestAggregateOverlay:
         assert 'class="env-totals"' not in out
         assert 'class="findings clean"' not in out
         assert "matched findings (scan overlay)" not in out
+
+
+# ---------------------------------------------------------------------------
+# Live-verify panel (Slice 16, session 4)
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyPanel:
+    def _topology(self) -> Topology:
+        return Topology(
+            services=[Service(id="api", repo="example/api")],
+            environments=[
+                Environment(id="dev", tier="development"),
+                Environment(id="prod", tier="production"),
+            ],
+            deploy_edges=[
+                DeployEdge(service="api", environment="prod",
+                           pipeline=".github/workflows/prod.yml",
+                           gates=["manual_approval"]),
+            ],
+        )
+
+    def test_panel_omitted_when_verification_is_none(self, sample):
+        out = topology_html.render(sample)
+        assert "Live verification" not in out
+
+    def test_panel_omitted_when_verification_is_fully_clean(self):
+        t = self._topology()
+        verification = {"by_repo": {}, "drift": [], "unverifiable": []}
+        out = topology_html.render(t, verification=verification)
+        assert "Live verification" not in out
+
+    def test_drift_table_renders_environment_not_found(self):
+        t = self._topology()
+        verification = {
+            "by_repo": {"example/api": {"environments": [], "branch_protection": None,
+                                         "default_branch": "main", "error": None}},
+            "drift": [{
+                "kind": "environment-not-found",
+                "service": "api",
+                "environment": "prod",
+                "asserted_gates": ["manual_approval"],
+                "actual_gates": [],
+                "detail": "no such deployment environment",
+            }],
+            "unverifiable": [],
+        }
+        out = topology_html.render(t, verification=verification)
+        assert "Live verification" in out
+        assert "environment-not-found" in out
+        assert "manual_approval" in out
+        assert "no such deployment environment" in out
+        # Danger styling on environment-not-found
+        assert 'class="drift-kind danger"' in out
+
+    def test_drift_table_renders_actual_not_asserted_with_warning(self):
+        t = self._topology()
+        verification = {
+            "by_repo": {"example/api": {"environments": [], "branch_protection": None,
+                                         "default_branch": "main", "error": None}},
+            "drift": [{
+                "kind": "gate-actual-not-asserted",
+                "service": "api",
+                "environment": "prod",
+                "asserted_gates": ["manual_approval"],
+                "actual_gates": ["manual_approval", "wait_timer"],
+                "detail": "live env has wait_timer not asserted",
+            }],
+            "unverifiable": [],
+        }
+        out = topology_html.render(t, verification=verification)
+        # Yellow styling for the lower-signal kind.
+        assert 'class="drift-kind warning"' in out
+
+    def test_per_repo_snapshot_table(self):
+        t = self._topology()
+        verification = {
+            "by_repo": {
+                "example/api": {
+                    "default_branch": "main",
+                    "environments": [
+                        {"name": "prod", "protection_rules": ["manual_approval"]},
+                    ],
+                    "branch_protection": {
+                        "branch": "main", "rules": ["branch_protection"],
+                    },
+                    "error": None,
+                },
+            },
+            "drift": [],
+            "unverifiable": [],
+        }
+        out = topology_html.render(t, verification=verification)
+        assert "Live snapshot per repo" in out
+        assert "example/api" in out
+        assert "branch_protection" in out
+
+    def test_unverifiable_list(self):
+        t = self._topology()
+        verification = {
+            "by_repo": {},
+            "drift": [],
+            "unverifiable": [
+                {"service": "worker", "environment": "prod",
+                 "reason": "service has no `repo` set in topology"},
+            ],
+        }
+        out = topology_html.render(t, verification=verification)
+        assert "Unverifiable deploy edges" in out
+        assert "worker" in out
+
+    def test_summary_includes_drift_count(self):
+        t = self._topology()
+        verification = {
+            "by_repo": {"example/api": {"environments": [], "branch_protection": None,
+                                         "default_branch": None, "error": None}},
+            "drift": [
+                {"kind": "gate-not-actual", "service": "api", "environment": "prod",
+                 "asserted_gates": [], "actual_gates": [], "detail": "x"},
+                {"kind": "gate-not-actual", "service": "api", "environment": "prod",
+                 "asserted_gates": [], "actual_gates": [], "detail": "y"},
+            ],
+            "unverifiable": [],
+        }
+        out = topology_html.render(t, verification=verification)
+        assert "2 live drift record(s) across 1 repo(s)" in out
+
+    def test_html_escapes_drift_detail(self):
+        t = self._topology()
+        verification = {
+            "by_repo": {},
+            "drift": [{
+                "kind": "gate-not-actual",
+                "service": "<api>",
+                "environment": "prod",
+                "asserted_gates": ["<a>"],
+                "actual_gates": [],
+                "detail": "evil <script>alert(1)</script>",
+            }],
+            "unverifiable": [],
+        }
+        out = topology_html.render(t, verification=verification)
+        assert "<script>alert(1)</script>" not in out
+        assert "&lt;script&gt;" in out
