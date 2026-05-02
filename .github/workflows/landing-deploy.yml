@@ -1,0 +1,72 @@
+name: Landing page (ciguard.dev) deploy
+
+# Auto-deploys the Astro landing page in `landing/` to Cloudflare Pages
+# project `ciguard` on every push to main that touches the landing
+# tree. Manual runs via `workflow_dispatch` for forced republishes.
+#
+# Required repo secrets (set once during cutover — see
+# `landing/README.md`):
+#   - CLOUDFLARE_API_TOKEN  — token with Pages:Edit scope (NOT a global API key)
+#   - CLOUDFLARE_ACCOUNT_ID — Cloudflare account ID (visible on dashboard home)
+#
+# This workflow does NOT gate the rest of the build. The engine's CI
+# / CodeQL / Dogfood / Code Scanning gate are unaffected by changes
+# under `landing/**`.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'landing/**'
+      - '.github/workflows/landing-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write   # Cloudflare wrangler-action posts a Deployment record
+
+# Only one deploy in flight at a time — last-push-wins so a fast
+# follow-up doesn't deploy a stale dist.
+concurrency:
+  group: landing-deploy
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    defaults:
+      run:
+        working-directory: landing
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: landing/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build static site
+        run: npm run build
+
+      - name: Verify build output
+        # Sanity check before publishing. Catches the dev-server
+        # / SSR / mis-configuration regression class — `dist/` MUST
+        # exist + contain `index.html` for Pages to serve anything.
+        run: |
+          test -f dist/index.html || (echo "::error::dist/index.html missing — build failed silently" && exit 1)
+          test -f dist/_headers || echo "::warning::dist/_headers missing — security headers won't be served"
+          echo "dist/ contents:"
+          find dist -type f | sort
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd  # v3.15.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: landing
+          command: pages deploy dist --project-name=ciguard --branch=main --commit-dirty=true

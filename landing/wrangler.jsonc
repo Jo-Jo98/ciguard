@@ -1,0 +1,22 @@
+// Cloudflare Pages config for ciguard.dev.
+//
+// Recorded here so the deploy is infrastructure-as-code rather than
+// dashboard-clicked: any future build-settings change goes through PR
+// review + the same Code Scanning gate that protects the engine.
+//
+// `wrangler-action@v3` reads this on every push to main affecting
+// `landing/**` (see `.github/workflows/landing-deploy.yml`). The
+// workflow does the equivalent of:
+//
+//   wrangler pages deploy ./landing/dist \
+//     --project-name=ciguard \
+//     --commit-dirty=true
+//
+// First-run bootstrap: `wrangler pages project create ciguard
+// --production-branch=main` (one-time, see landing/README.md).
+{
+  "$schema": "https://json.schemastore.org/wrangler-config.json",
+  "name": "ciguard",
+  "compatibility_date": "2026-05-02",
+  "pages_build_output_dir": "./dist"
+}
