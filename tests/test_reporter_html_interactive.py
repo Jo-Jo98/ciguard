@@ -674,11 +674,12 @@ def test_no_unescaped_close_script_inside_inline_scripts() -> None:
     out = html_interactive.render(_basic_report(jobs=[Job(name="build")]))
     # Every occurrence of `</script>` must be at a tag-boundary position.
     # Test by stripping all properly-paired script blocks and asserting
-    # nothing's left over. The `[\s>]` after `script` matches both
-    # `</script>` and `</script >` per HTML spec — closes a CodeQL
-    # `py/bad-tag-filter` alert without changing what we test.
+    # nothing's left over. `[^>]*` after `script` accepts any tag-internal
+    # whitespace / garbage attributes the HTML spec permits — closes
+    # CodeQL `py/bad-tag-filter` alerts (#34, #50) without changing what
+    # we actually test.
     stripped = re.sub(
-        r"<script[^>]*>[\s\S]*?</script\s*>", "", out,
+        r"<script[^>]*>[\s\S]*?</script[^>]*>", "", out,
         flags=re.IGNORECASE,
     )
     assert "</script>" not in stripped, (
