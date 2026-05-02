@@ -133,6 +133,20 @@ def _repo_row(record: RepoScanRecord) -> str:
     if record.fork:
         flags.append('<span class="flag flag-fork">fork</span>')
 
+    # When per-repo drill-down maps were rendered, surface them as
+    # link chips next to the repo name. Multi-file repos get a chip
+    # per file; the chip text is the pipeline path so the auditor
+    # can pick the right one when the repo has several pipelines.
+    map_chips: List[str] = []
+    for m in record.maps:
+        href = m.get("href")
+        path = m.get("path", "")
+        if href:
+            map_chips.append(
+                f'<a class="flag flag-map" href="{_html_escape(href)}">'
+                f'{_html_escape(path)} &rarr;</a>'
+            )
+
     if record.error:
         body = (
             f'<td colspan="4" class="error">'
@@ -166,6 +180,10 @@ def _repo_row(record: RepoScanRecord) -> str:
         )
 
     flags_html = " ".join(flags)
+    maps_html = (
+        f'<div class="repo-maps">{" ".join(map_chips)}</div>'
+        if map_chips else ""
+    )
     desc_html = (
         f'<div class="repo-desc">{_html_escape(record.description)}</div>'
         if record.description else ""
@@ -175,6 +193,7 @@ def _repo_row(record: RepoScanRecord) -> str:
         f"<td><code>{_html_escape(record.repo)}</code> "
         f"{flags_html}"
         f"{desc_html}"
+        f"{maps_html}"
         "</td>"
         + body
         + "</tr>"
@@ -385,6 +404,9 @@ table.repos tbody tr:last-child td { border-bottom: none; }
 .flag-arc { color: #f59e0b; border-color: rgba(245,158,11,0.4); }
 .flag-fork { color: #6366f1; border-color: rgba(99,102,241,0.4); }
 .flag-err { color: #ef4444; border-color: rgba(239,68,68,0.4); }
+.flag-map { color: #38bdf8; border-color: rgba(56,189,248,0.4); text-decoration: none; }
+.flag-map:hover { background: rgba(56,189,248,0.12); color: #7dd3fc; }
+.repo-maps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 
 .panel { margin-top: 24px; }
 .error-list { padding-left: 20px; color: #a1a1aa; font-size: 12px; }

@@ -778,6 +778,95 @@ class TestExtractRepoImages:
 
 
 # ---------------------------------------------------------------------------
+# Per-repo drill-down maps (Slice 17 session 3)
+# ---------------------------------------------------------------------------
+
+
+class TestRepoMaps:
+    _CI_YAML = """name: ci
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo hello
+"""
+
+    def _provider(self, repos_with_files):
+        files_by_repo = {
+            r.full_name: [PipelineFile(path=".github/workflows/ci.yml",
+                                        content=self._CI_YAML)]
+            for r in repos_with_files
+        }
+        return StubProvider(repos_with_files, files_by_repo=files_by_repo)
+
+    def test_repo_map_dir_writes_per_repo_html_and_dashboard_links(self, tmp_path):
+        repos = [
+            RepoInfo(full_name="example/api"),
+            RepoInfo(full_name="example/web"),
+        ]
+        report = audit_org(
+            "example", self._provider(repos),
+            offline=True, repo_map_dir=tmp_path,
+        )
+        # Filesystem layout
+        assert (tmp_path / "repos" / "example__api" /
+                "github__workflows__ci.yml.html").exists()
+        assert (tmp_path / "repos" / "example__web" /
+                "github__workflows__ci.yml.html").exists()
+        # Each record carries one map entry
+        for rec in report.repos:
+            assert len(rec.maps) == 1
+            entry = rec.maps[0]
+            assert entry["path"] == ".github/workflows/ci.yml"
+            assert entry["href"].startswith("repos/")
+            assert entry["href"].endswith(".html")
+
+    def test_no_repo_map_dir_means_no_files_or_links(self, tmp_path):
+        repos = [RepoInfo(full_name="example/api")]
+        report = audit_org(
+            "example", self._provider(repos),
+            offline=True,
+        )
+        assert report.repos[0].maps == []
+        # Nothing written to tmp_path
+        assert list(tmp_path.iterdir()) == []
+
+    def test_safe_dirname_collapses_owner_slash_repo(self, tmp_path):
+        repos = [RepoInfo(full_name="acme-corp/payments-api")]
+        audit_org("acme-corp", self._provider(repos),
+                  offline=True, repo_map_dir=tmp_path)
+        # Slash in `owner/name` becomes `__` in the dir name
+        assert (tmp_path / "repos" / "acme-corp__payments-api").is_dir()
+        assert not (tmp_path / "repos" / "acme-corp").exists()
+
+    def test_per_file_render_failures_dont_blank_repo(self, tmp_path):
+        # Provide one good file + one with garbage YAML. The garbage
+        # one fails to parse so no map is written for it; the good
+        # one still renders.
+        provider = StubProvider(
+            repos=[RepoInfo(full_name="ex/api")],
+            files_by_repo={
+                "ex/api": [
+                    PipelineFile(path=".github/workflows/ci.yml", content=self._CI_YAML),
+                    PipelineFile(path=".gitlab-ci.yml",
+                                  content="bad ::\n  - [unbalanced"),
+                ],
+            },
+        )
+        report = audit_org("ex", provider, offline=True, repo_map_dir=tmp_path)
+        good_paths = [m["path"] for m in report.repos[0].maps]
+        assert ".github/workflows/ci.yml" in good_paths
+
+    def test_safe_file_stem_collapses_path(self):
+        from ciguard.audit_org.orchestrator import _safe_file_stem
+        assert _safe_file_stem(".github/workflows/ci.yml") == "github__workflows__ci.yml"
+        assert _safe_file_stem("Jenkinsfile") == "Jenkinsfile"
+        assert _safe_file_stem(".gitlab-ci.yml") == "gitlab-ci.yml"
+
+
+# ---------------------------------------------------------------------------
 # HTML rendering of the new panels
 # ---------------------------------------------------------------------------
 
@@ -826,6 +915,59 @@ class TestImagePanelsHTML:
         assert "1 inconsistent" in out
         assert "2 variants" in out
         assert "<code>python</code>" in out
+
+    def test_per_repo_maps_rendered_as_links(self):
+        report = OrgAuditReport(
+            org="x",
+            repos=[
+                RepoScanRecord(
+                    repo="ex/api",
+                    scan={
+                        "files_scanned": 1, "total_findings": 0,
+                        "by_severity": {sev: 0 for sev in
+                                        ("Critical", "High", "Medium", "Low", "Info")},
+                        "files": [{"path": "ci.yml", "platform": "github-actions",
+                                   "grade": "A", "findings_total": 0,
+                                   "findings_by_severity": {}}],
+                    },
+                    maps=[{"path": ".github/workflows/ci.yml",
+                            "file": "github__workflows__ci.yml.html",
+                            "href": "repos/ex__api/github__workflows__ci.yml.html"}],
+                ),
+            ],
+        )
+        out = org_audit_html.render(report)
+        assert 'class="flag flag-map"' in out
+        assert 'href="repos/ex__api/github__workflows__ci.yml.html"' in out
+        assert ".github/workflows/ci.yml" in out
+
+    def test_no_map_chips_when_maps_empty(self):
+        report = OrgAuditReport(
+            org="x",
+            repos=[RepoScanRecord(repo="ex/api")],
+        )
+        out = org_audit_html.render(report)
+        assert 'class="flag flag-map"' not in out
+
+    def test_map_link_href_html_escaped(self):
+        report = OrgAuditReport(
+            org="x",
+            repos=[
+                RepoScanRecord(
+                    repo="ex/api",
+                    maps=[{"path": "<evil>",
+                            "file": "x.html",
+                            "href": 'evil"&href'}],
+                ),
+            ],
+        )
+        out = org_audit_html.render(report)
+        assert "<evil>" not in out
+        assert "&lt;evil&gt;" in out
+        # The raw double-quote that would break the href attribute
+        # must be escaped.
+        assert 'evil"&href' not in out
+        assert "&quot;" in out or "&amp;" in out
 
     def test_image_inventory_no_inconsistency_label_when_clean(self):
         report = OrgAuditReport(

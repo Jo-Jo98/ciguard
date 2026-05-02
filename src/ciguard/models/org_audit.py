@@ -53,6 +53,7 @@ class RepoScanRecord(BaseModel):
     error: Optional[str] = None
     pipeline_file_count: int = 0   # how many CI files we found in the repo
     images: List[Dict[str, Any]] = Field(default_factory=list)
+    maps: List[Dict[str, str]] = Field(default_factory=list)
 
     @property
     def total_findings(self) -> int:

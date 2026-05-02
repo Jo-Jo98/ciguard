@@ -952,6 +952,13 @@ def cmd_audit_org(args: argparse.Namespace) -> int:
         )
         return 1
 
+    output_dir = (
+        Path(args.output_dir).expanduser().resolve()
+        if getattr(args, "output_dir", None) else None
+    )
+    if output_dir is not None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+
     report = audit_org(
         args.org,
         provider,
@@ -961,6 +968,7 @@ def cmd_audit_org(args: argparse.Namespace) -> int:
         include_archived=args.include_archived,
         include_forks=args.include_forks,
         offline=args.offline,
+        repo_map_dir=output_dir,
     )
 
     if args.format == "json":
@@ -974,7 +982,18 @@ def cmd_audit_org(args: argparse.Namespace) -> int:
 
     if args.format == "html":
         from ciguard.reporter import org_audit_html
-        if args.output and args.output != "-":
+        # When --output-dir is set, the dashboard always lands inside
+        # it as `dashboard.html` so per-repo links resolve correctly
+        # from a single browser-loadable file. Explicit --output only
+        # applies when --output-dir is unset.
+        if output_dir is not None:
+            dest = output_dir / "dashboard.html"
+            org_audit_html.write_report(report, dest)
+            print(f"Org audit HTML written to {dest}")
+            n_maps = sum(len(r.maps) for r in report.repos)
+            if n_maps:
+                print(f"  + {n_maps} per-repo pipeline maps under {output_dir / 'repos'}")
+        elif args.output and args.output != "-":
             org_audit_html.write_report(report, Path(args.output))
             print(f"Org audit HTML written to {args.output}")
         else:
@@ -1571,6 +1590,16 @@ def main() -> int:
         help="Exit non-zero when the rolled-up severity counts include "
              "any finding at or above this threshold. Default `none` "
              "(informational); same semantics as `scan-repo --fail-on`.",
+    )
+    audit_org_parser.add_argument(
+        "--output-dir", default=None,
+        help="Write per-repo `html-interactive` pipeline maps under "
+             "`<dir>/repos/<owner>__<name>/<stem>.html` and the "
+             "dashboard at `<dir>/dashboard.html`. The dashboard's "
+             "repo rows link to the maps so an auditor can drill from "
+             "the org view into a specific pipeline. When set with "
+             "`--format html`, `--output` is ignored in favour of the "
+             "dashboard path inside `--output-dir`.",
     )
 
     args = parser.parse_args()
