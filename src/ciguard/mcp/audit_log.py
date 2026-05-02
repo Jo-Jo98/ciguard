@@ -84,6 +84,11 @@ def write_event(event: Dict[str, Any]) -> Optional[Path]:
             import sys
             sys.stderr.write(f"[ciguard-mcp-audit] write failed: {exc}\n")
         except Exception:
+            # Swallowed deliberately: stderr itself can be closed,
+            # redirected to a broken pipe, or unwriteable. We must
+            # NEVER let an audit-write failure propagate into the
+            # caller — the MCP response would otherwise be poisoned
+            # by a side-channel that has no business raising.
             pass
         return None
 

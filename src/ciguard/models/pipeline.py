@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
@@ -333,7 +333,7 @@ class Delta(BaseModel):
 
 class Report(BaseModel):
     pipeline_name: str
-    scan_timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    scan_timestamp: str = Field(default_factory=lambda: datetime.now(tz=timezone.utc).isoformat())
     findings: List[Finding] = Field(default_factory=list)
     risk_score: RiskScore
     pipeline: Pipeline = Field(default_factory=Pipeline)

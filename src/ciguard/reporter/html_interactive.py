@@ -82,19 +82,10 @@ def _render_job_yaml(job: Job) -> str:
 
 # ---- Severity → colour palette (post-pivot visual language) ---------------
 #
-# Mirrors `reference_ciguard_audit_scope.md` Slice 14a visual language.
-# Severity colours match Tailwind's palette so any future themer hits
-# familiar tokens. Border colour is what a node renders by default;
-# fill stays neutral to keep the map readable in dense pipelines.
-
-_SEVERITY_COLOURS: Dict[str, str] = {
-    "Critical": "#ef4444",  # red-500
-    "High":     "#f97316",  # orange-500
-    "Medium":   "#f59e0b",  # amber-500
-    "Low":      "#22c55e",  # green-500 (intentional: Low = "best practice", not danger)
-    "Info":     "#6366f1",  # indigo-500
-}
-_NEUTRAL_BORDER = "#3f3f46"  # zinc-700 — node has no findings
+# Severity colours live inline in `_VIEWER_CSS` further down — early
+# Slice 14a drafts had Python-side palette constants here; they were
+# inlined into the CSS once the visual language stabilised. Removed
+# 2026-05-02 to clear `py/unused-global-variable` (#32, #33).
 
 
 # ---- Data-shape transform: Report → visualiser JSON -----------------------
@@ -1579,8 +1570,8 @@ def _escape_close_tag(js: str) -> str:
     close-tag, breaking the embedded script silently. Defensive belt-
     and-braces so a future edit can't do the same."""
     # Case-insensitive: HTML parsers don't care about case on close tags.
-    import re as _re
-    return _re.sub(r"<(/script\s*>)", r"<\\\1", js, flags=_re.IGNORECASE)
+    # `_re` is imported at module top; no local reimport needed (#35).
+    return _re.sub(r"<(/script[^>]*>)", r"<\\\1", js, flags=_re.IGNORECASE)
 
 
 def render(report: Report) -> str:

@@ -12,7 +12,7 @@ through reports the same way pipeline `Report` already does.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -70,7 +70,7 @@ class InventoryReport(BaseModel):
     """Output of one `ciguard inventory` run."""
     entries: List[InventoryEntry] = Field(default_factory=list)
     scan_timestamp: str = Field(
-        default_factory=lambda: datetime.utcnow().isoformat() + "Z"
+        default_factory=lambda: datetime.now(tz=timezone.utc).isoformat()
     )
     scanner_version: str = "ciguard"
 

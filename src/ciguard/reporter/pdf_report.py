@@ -18,7 +18,7 @@ Sections:
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ..models.pipeline import Report, Severity
@@ -745,7 +745,7 @@ class PDFReporter:
         # Footer
         canvas.setFillColor(_SUB_TEXT)
         canvas.setFont("Helvetica", 7)
-        canvas.drawString(2*cm, 0.7*cm, f"Generated {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC")
+        canvas.drawString(2*cm, 0.7*cm, f"Generated {datetime.now(tz=timezone.utc).strftime('%Y-%m-%d %H:%M')} UTC")
         canvas.drawRightString(w - 2*cm, 0.7*cm, f"Page {doc.page}")
         canvas.restoreState()
 

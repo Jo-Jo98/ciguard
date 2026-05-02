@@ -97,6 +97,8 @@ def test_push_and_pull_request_for_same_head_sha_both_run() -> None:
         assert len(scanned) == 2
         assert {j.pr_number for j in scanned} == {None, 42}
 
+    _run(_inner)
+
 
 def test_different_installations_with_same_sha_do_not_dedup() -> None:
     """The dedup key is the FULL tuple — same SHA in different
