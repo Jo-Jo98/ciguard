@@ -5,6 +5,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Slice 16 session 1 (topology data model + YAML loader)
+
+- **`ciguard topology` CLI verb** — validates and summarises a `ciguard.topology.yml` file (the cross-pipeline graph: services, environments, deploy edges, promotion gates, secret scopes, network segments). Auto-discovers from cwd upward, same convention as `.ciguardignore`. Text format prints an auditor-focused posture summary (production deploy targets + their gates, gateless promotions called out in yellow, secret-scope blast radius, network reachability per segment); `--format json` emits the full validated `Topology` model for downstream tooling.
+- **Topology data model** in `src/ciguard/models/topology.py` — six pydantic entities (`Service`, `Environment`, `DeployEdge`, `EnvTransition`, `SecretScope`, `NetworkSegment`) + `Topology` aggregate root. Cross-reference integrity validated at construction time: a typo in a service id, environment id, or network segment fails loud at load, not at query time.
+- **Query helpers** on `Topology` answering the auditor questions named in the audit-scope spec: `pipelines_for_environment(env)`, `services_sharing_secret(scope)`, `transitions_without_gates()`, `reachable_segments(segment)` (transitive closure of `can_reach`), `production_environments()` (matches `prod` / `production` / `live` tiers, case-insensitive).
+- **YAML loader** in `src/ciguard/topology/loader.py` — `load(path)` returns a validated `Topology`; `discover(start)` walks up from a directory looking for `ciguard.topology.yml`, stopping at `.git` or filesystem root. Single `TopologyLoadError` wraps every failure mode (missing file, YAML parse error, schema mismatch, cross-reference violation) with the file path prepended so error messages point at the actual `.yml` file.
+- **Sample fixture** at `tests/fixtures/topology/sample.topology.yml` — realistic 3-service / 4-environment shape exercising every entity type, including the deliberate `worker → prod` edge with no gates and the `dev → prod` transition with no approval gate so the auditor warnings have something to flag.
+- **Test count: 805 → 836 (+31)** — model construction + cross-reference validation + every query helper + every loader error mode + discovery walk semantics.
+
+### Deferred to follow-on Slice 16 sessions
+
+- **Auto-discovery from `scan-repo` output** — derive a partial topology from pipeline files alone, no operator YAML required. Useful first-run experience.
+- **Live-API verification** — cross-check the asserted topology against GitHub deployment-environments + branch-protection APIs (and GitLab equivalents) to flag drift between asserted and actual.
+- **Visual rendering** — a topology HTML page (probably standalone like the inventory page) showing environment swimlanes, deploy-edge graph, gate annotations, network-segmentation overlays.
+- **Cross-pipeline aggregation** — feed a `scan-repo` output into the topology to compute per-environment finding counts.
+
 ### Added — Slice 14b (infrastructure inventory — first 3 probes)
 
 - **`ciguard inventory` CLI verb** — live admin-API audit of CI/CD tooling, distinct from the pipeline-file scanning the rest of ciguard does. Reads operator-supplied env vars, calls each tool's admin API for version + edition, cross-references with endoflife.date for EOL/EOS warnings.

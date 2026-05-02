@@ -350,6 +350,58 @@ For each configured tool, ciguard reports the detected version + edition + EOL/E
 
 Read-only credentials are recommended throughout. The Jenkins probe needs `Overall/Read` at minimum; GitLab probe needs `read_api`; GHE probe needs the default `repo` scope.
 
+## Multi-environment topology (`ciguard topology`)
+
+The cross-pipeline picture: which services exist, which environments they deploy to, which gates separate environment transitions, which secret scopes are shared, which environments can reach which others. Operator-asserted via `ciguard.topology.yml` at the repo root (auto-discovered by walking up from the working directory, like `.ciguardignore`).
+
+```bash
+ciguard topology                                  # auto-discover + summarise
+ciguard topology --input infra/topology.yml       # explicit path
+ciguard topology --format json                    # machine-readable
+```
+
+Minimal example:
+
+```yaml
+# ciguard.topology.yml
+services:
+  - id: api
+    repo: example/api
+
+environments:
+  - id: dev
+    tier: development
+  - id: staging
+    tier: staging
+  - id: prod
+    tier: production
+    network_segment: production
+
+deploy_edges:
+  - service: api
+    environment: prod
+    pipeline: .github/workflows/deploy-prod.yml
+    gates: [manual_approval, required_reviewer, branch_protection]
+
+transitions:
+  - from: staging
+    to: prod
+    gates: [manual_approval]
+
+secret_scopes:
+  - id: prod-db
+    environments: [prod]
+    services: [api]
+
+network_segments:
+  - id: production
+    can_reach: []
+```
+
+The text summary calls out auditor-relevant posture: production deploy targets + their gates, gateless promotions (e.g. `dev → prod` with no approval is a red flag), secret-scope blast radius, network reachability between segments. Cross-references resolve at load time — a typo in a service name fails fast with a clear error.
+
+Subsequent Slice 16 sessions will: (a) auto-derive a partial topology from `scan-repo` output (no operator YAML required), (b) cross-check against live GitHub deployment-environments + branch-protection APIs to flag drift between asserted and actual.
+
 ## Pre-commit hook
 
 Install ciguard into your `pre-commit` chain to scan pipeline files on every commit:

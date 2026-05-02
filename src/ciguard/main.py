@@ -680,6 +680,117 @@ def _print_inventory_table(report, *, output_path: Optional[str]) -> None:
         print(output, end="")
 
 
+# ---------------------------------------------------------------------------
+# `topology` subcommand (Slice 16, session 1)
+# ---------------------------------------------------------------------------
+
+
+def cmd_topology(args: argparse.Namespace) -> int:
+    """Validate + summarise a `ciguard.topology.yml`. Default text output
+    is a posture summary the operator skims; `--format json` emits the
+    full validated `Topology` model for downstream tooling."""
+    from ciguard.topology import discover, load, TopologyLoadError
+
+    if args.input:
+        path = Path(args.input).expanduser()
+    else:
+        found = discover(Path.cwd())
+        if not found:
+            print(
+                f"{_RED}Error:{_RESET} no `ciguard.topology.yml` found in "
+                "the current directory or any parent. Pass --input to "
+                "load a file from a non-standard location.",
+                file=sys.stderr,
+            )
+            return 1
+        path = found
+
+    try:
+        topology = load(path)
+    except TopologyLoadError as exc:
+        print(f"{_RED}Error:{_RESET} {exc}", file=sys.stderr)
+        return 1
+
+    if args.format == "json":
+        import json as _json
+        payload = _json.dumps(topology.model_dump(mode="json", by_alias=True),
+                              indent=2, default=str)
+        if args.output and args.output != "-":
+            Path(args.output).write_text(payload + "\n", encoding="utf-8")
+        else:
+            print(payload)
+        return 0
+
+    _print_topology_summary(topology, source=path, output_path=args.output)
+    return 0
+
+
+def _print_topology_summary(topology, *, source: Path, output_path: Optional[str]) -> None:
+    """Render a posture-focused text summary. Calls out the auditor
+    questions the topology spec answers: deploy targets, gateless
+    promotions, secret-scope blast radius, network reachability."""
+    lines: list[str] = []
+    lines.append(f"{_BOLD}ciguard topology{_RESET} — {source}")
+    lines.append(
+        f"  {len(topology.services)} services · "
+        f"{len(topology.environments)} environments · "
+        f"{len(topology.deploy_edges)} deploy edges · "
+        f"{len(topology.transitions)} transitions · "
+        f"{len(topology.secret_scopes)} secret scopes · "
+        f"{len(topology.network_segments)} network segments"
+    )
+    lines.append("")
+
+    if topology.production_environments():
+        lines.append(f"{_BOLD}Production deploy targets:{_RESET}")
+        for env in topology.production_environments():
+            edges = topology.pipelines_for_environment(env.id)
+            lines.append(f"  {env.id} ({env.region or 'no region'}) — {len(edges)} deploy edge(s)")
+            for e in edges:
+                gates = ", ".join(e.gates) if e.gates else f"{_RED}no gates{_RESET}"
+                pipe = e.pipeline or "(no pipeline path)"
+                lines.append(f"    ← {e.service} via {pipe}  [{gates}]")
+        lines.append("")
+
+    gateless = topology.transitions_without_gates()
+    if gateless:
+        lines.append(f"{_BOLD}{_YELLOW}Gateless transitions ({len(gateless)}):{_RESET}")
+        for t in gateless:
+            lines.append(f"  {t.from_env} → {t.to_env}  {_DIM}(no approval gate){_RESET}")
+        lines.append("")
+    elif topology.transitions:
+        lines.append(f"{_GREEN}All {len(topology.transitions)} transitions have gates.{_RESET}")
+        lines.append("")
+
+    if topology.secret_scopes:
+        lines.append(f"{_BOLD}Secret-scope blast radius:{_RESET}")
+        for scope in topology.secret_scopes:
+            lines.append(
+                f"  {scope.id}: {len(scope.environments)} env(s) · "
+                f"{len(scope.services)} service(s)"
+            )
+        lines.append("")
+
+    if topology.network_segments:
+        lines.append(f"{_BOLD}Network reachability:{_RESET}")
+        for seg in topology.network_segments:
+            try:
+                reach = sorted(topology.reachable_segments(seg.id))
+            except KeyError:
+                reach = []
+            label = ", ".join(reach) if reach else f"{_DIM}isolated{_RESET}"
+            lines.append(f"  {seg.id} → {label}")
+        lines.append("")
+
+    output = "\n".join(lines) + "\n"
+    if output_path and output_path != "-":
+        import re as _re
+        plain = _re.sub(r"\033\[[0-9;]*m", "", output)
+        Path(output_path).write_text(plain, encoding="utf-8")
+    else:
+        print(output, end="")
+
+
 def _print_terminal_report(report) -> None:
     import textwrap
 
@@ -1010,6 +1121,33 @@ def main() -> int:
              "exceeds this severity. Default `none` (informational).",
     )
 
+    # ---- `topology` subcommand (Slice 16): validate + summarise the
+    # operator-supplied multi-environment topology graph. Future
+    # sessions add auto-discovery from scan-repo + live-API drift
+    # detection against deployment-environments / branch-protection.
+    topology_parser = subparsers.add_parser(
+        "topology",
+        help="Validate and summarise a `ciguard.topology.yml` file (the "
+             "cross-pipeline graph: services, environments, deploy edges, "
+             "promotion gates, secret scopes, network segments). "
+             "Auto-discovers from the current directory upward unless "
+             "--input is set.",
+    )
+    topology_parser.add_argument(
+        "--input", "-i", default=None,
+        help="Path to ciguard.topology.yml. Defaults to discovery from cwd.",
+    )
+    topology_parser.add_argument(
+        "--format", "-f", default="text",
+        choices=["text", "json"],
+        help="Output format. `text` prints a summary; `json` emits the "
+             "full validated Topology model.",
+    )
+    topology_parser.add_argument(
+        "--output", "-o", default=None,
+        help="Where to write the output. `-` (default) writes to stdout.",
+    )
+
     args = parser.parse_args()
 
     if args.command == "scan":
@@ -1139,6 +1277,8 @@ def main() -> int:
         return 0
     elif args.command == "inventory":
         return cmd_inventory(args)
+    elif args.command == "topology":
+        return cmd_topology(args)
     else:
         parser.print_help()
         return 0
