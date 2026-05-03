@@ -98,14 +98,23 @@ cf_call() {
   fi
 }
 
-# pyjq — extract a value from a Cloudflare API response.
-#   pyjq '.result[].name' '<json>'
+# pyjq — extract a value from a JSON document on stdin.
+#
+# Path syntax: dot-separated keys, with `[]` for "iterate every item in
+# this list". Examples:
+#   pyjq '.result.expires_on'   → scalar from a nested object
+#   pyjq '.result.[].id'        → list of ids from result[]
 pyjq() {
   local expr="$1"; shift
   python3 -c "
 import json, sys
 d = json.loads(sys.stdin.read())
 expr = '''$expr'''
+# Tokenise: '[]' is its own token; everything else splits on dots.
+tokens = []
+for piece in expr.lstrip('.').replace('[]', '|[]|').split('|'):
+    if piece == '[]': tokens.append(piece)
+    elif piece: tokens.extend(p for p in piece.split('.') if p)
 def walk(node, parts):
     if not parts: return [node]
     head, rest = parts[0], parts[1:]
@@ -113,13 +122,11 @@ def walk(node, parts):
         out = []
         for item in (node or []): out.extend(walk(item, rest))
         return out
-    return walk(node.get(head, {}) if isinstance(node, dict) else None, rest)
-parts = [p for p in expr.lstrip('.').replace('[]', '|[]|').split('|') if p]
-parts = [p.lstrip('.') if p != '[]' else p for p in parts]
-result = walk(d, parts)
-for r in result:
+    if isinstance(node, dict): return walk(node.get(head), rest)
+    return [None]
+for r in walk(d, tokens):
+    if r is None: continue
     if isinstance(r, (dict, list)): print(json.dumps(r))
-    elif r is None: pass
     else: print(r)
 "
 }
