@@ -5,6 +5,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-05-03
+
+**Highlights:** This release matures ciguard from per-pipeline scanner to org-wide audit deliverable. Slices 14b/14c/15/16/17 add cross-pipeline topology with live-API verification, an org-level dashboard with per-repo D3 drill-downs, MCP redaction + audit-log hardening, and three pin-discipline rules. Slice 10 ships ciguard.dev — a static landing page on Cloudflare Pages with CAA pinning, DMARC/SPF email-spoofing lockdown, 404 page, robots, and sitemap. Atheris weekly fuzz finding #18 (pyyaml RecursionError on deeply-nested input) is fixed. Test count: 743 → 962 (+219).
+
+### Security
+
+- **Fuzz #18 — pyyaml RecursionError now wrapped as ValueError on every yaml.safe_load site.** Atheris weekly run (2026-05-03) found a 1915-byte deeply-nested YAML input that escaped each parser's `yaml.YAMLError` handler. Production sites in `parser/github_actions.py`, `parser/gitlab_parser.py`, `ignore.py`, and `topology/loader.py` now wrap `RecursionError` as the same `ValueError` / `TopologyLoadError` they emit for malformed YAML. The Atheris harness's `EXPECTED` tuple gains `RecursionError` so the harness keeps catching new crash classes. Severity assessment: low for the CLI (trusted file input), but real-DoS for the GitHub App webhook + MCP server paths that ship in this release. Original Atheris artifact preserved at `tests/fixtures/fuzz/recursion-yaml-issue-18.bin`; regression test pins the bug class with a synthetic 2000-deep nest. Closes #18.
+
+### Added — Slice 17 (org-level audit dashboard — three sessions)
+
+#### Session 1 — repo enumeration + scan + rollup
+
+- **`ciguard audit-org --org <name>`** walks every repo in a GitHub organisation, fetches pipeline files via the Contents API, materialises them to a tempdir per repo, runs `scan_repo()` against the tempdir, and rolls per-repo results into one `OrgAuditReport`. Routing through the same `scan_repo()` helper the CLI + MCP scan_repo tool already use means every per-file finding the org dashboard reports is the same finding `scan-repo` would have reported run locally.
+- **`OrgProvider` Protocol** (`list_repos(org)` + `fetch_pipeline_files(repo)`) keeps platform-specific wiring isolated. `GitHubOrgProvider` is the only concrete implementation today; GitLab / Bitbucket / Azure DevOps fit the same shape. Pagination via `?page=N&per_page=100` up to 5,000 repos; user-vs-org fallback when the slug isn't an org; 404 → None for soft-miss handling on root-level pipeline file probes (.gitlab-ci.yml / Jenkinsfile most repos won't have).
+- **Filtering:** `--include` / `--exclude` regex on `owner/name`, `--limit` caps the audit universe (after filtering). Forks + archived repos honoured by Contents API behaviour. `CIGUARD_GITHUB_TOKEN` for auth; `CIGUARD_GITHUB_API_URL` override for GHE.
+- **Output:** text-format dashboard summary by default; `--format html` writes a self-contained dark-mode org dashboard (severity chips, grade distribution, platform mix, skipped/error tracking) reusing the existing visual vocabulary; `--format json` emits the full `OrgAuditReport`.
+
+#### Session 2 — image inventory + pin-discipline rollup
+
+- **`OrgAuditReport.image_inventory`** — list of one record per distinct image-name (dedup key is the bare name, not the full `image:tag` string, because the auditor's question is "how many flavours of python are we running"). Each record carries the set of repos using it, distinct tag values seen, pin-status mix, registries seen, and total reference count.
+- **`OrgAuditReport.image_inconsistencies`** — subset where `distinct_tag_count > 1`, the headline auditor callout ("twelve flavours of python across fifty services"). Sorted by descending repo-count then ascending name.
+- **`OrgAuditReport.pin_discipline`** — counts + 1-decimal percentages for digest / tag / mutable across every image reference in every scanned repo. The denominator the audit-scope spec wanted.
+- **Implementation** in new `audit_org/images.py` re-parses each pipeline file in the materialised tempdir and calls the existing `extract_image_references()` from sca_rules, so the digest/tag/mutable classification matches what the per-pipeline scan reports — single source of truth.
+- **Dashboard surfaces:** image-inventory panel with the multi-variant inconsistencies upfront; text summary gains a pin-discipline percentage line + an inconsistency call-out listing the top 5 multi-variant images with their tag set.
+
+#### Session 3 — per-repo drill-down maps
+
+- **`ciguard audit-org --output-dir DIR`** writes the dashboard to `<DIR>/dashboard.html` and one `html-interactive` pipeline map per discovered pipeline file under `<DIR>/repos/<owner>__<name>/<stem>.html`. Dashboard repo rows render link chips for each rendered map so an auditor can drill from the org view straight into a specific pipeline's D3 visualisation.
+- **Filesystem layout** chosen so relative `<a href>` from the dashboard resolves without a server (works in `file://` mode), browsable via `ls`, no nested-deep paths that confuse operators copying the deliverable to a fileshare. Slash in `owner/name` collapsed to `__` (avoids needing to mkdir a subdirectory per owner).
+- **CLI surface:** `--output-dir DIR` flag. When set, the dashboard always writes to `<DIR>/dashboard.html`; explicit `--output` is honoured only when `--output-dir` is unset (preserves the session-1 single-file behaviour).
+
+**Test count across Slice 17:** 874 → 965 (+91) — 23 audit-org orchestrator tests, 14 image-inventory tests, 5 drill-down tests, 8 dashboard-rendering tests, 11 reporter tests, plus Contents API materialisation integration coverage.
+
+### Added — Slice 16 session 4 (topology live-API verification)
+
+- **`ciguard topology --verify`** cross-checks the operator-asserted topology against the live SCM platform on the gate dimension, complementing session 3's drift panel on the file dimension. Surfaces three drift kinds: environment-not-found (asserted env doesn't exist), gate-not-actual (asserted protection missing on the live env), gate-actual-not-asserted (live env has a rule the topology under-claims).
+- **`GitHubProvider` implementation** reads `/repos/{owner}/{repo}/environments` and `/repos/{owner}/{repo}/branches/{default}/protection`, normalising GitHub's protection-rule shape onto ciguard's gate vocabulary (`required_reviewers` → `manual_approval` + `required_reviewer`; `wait_timer` → `wait_timer`; `branch_policy` → `deployment_environment_protection`). Token via `CIGUARD_GITHUB_TOKEN`; `CIGUARD_GITHUB_API_URL` override for GHE.
+- **Provider is a Protocol** (single `fetch(repo) → RepoSnapshot` method) so GitLab / Bitbucket can plug in later without reshaping the verifier. Verifier is pure orchestration — tests inject a stub Provider, no network.
+- **Renders into the topology HTML** via a "Live verification" panel (drift table + per-repo snapshot table + unverifiable list), into the JSON output via a `verification` field, and into the text summary via a posture line + per-record breakdown. Panel omitted when `--verify` is off or every check is clean.
+- **Test count: 874 → 907 (+33)** — 25 verify tests covering provider mapping, branch-protection 401/404 handling, drift detection across all three kinds, branch-level vs env-level gate routing, repo dedup, unverifiable edges. 8 HTML panel tests covering omission, danger/warning styling, per-repo snapshot table, summary count, HTML escaping.
+
 ### Added — Slice 16 session 3 (cross-pipeline scan overlay)
 
 - **`ciguard topology --scan-output <json>`** — pair a `scan-repo` aggregate with the topology to overlay per-environment + per-(service, env) severity chips on the swimlane HTML page. Every cell that maps to a scanned pipeline gets compact severity chips (`1 C`, `2 H`, `1 L` ...); each environment header carries per-environment totals across every pipeline that deploys to that env. Cells with zero findings get a small `clean` marker so the operator can distinguish "scanned and clean" from "no scan data".
@@ -85,6 +126,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Deferred
 
 - `SCA-PIN-003` (cross-pipeline drift detection) was scoped in Slice 14c but requires aggregating image references across multiple pipeline files in a single scan — that lives in `repo_scan.py`, not the per-pipeline rule contract. Will land alongside cross-pipeline aggregation plumbing in a follow-up.
+
+### Added — Slice 10 (ciguard.dev landing page — two sessions)
+
+#### Session 1 — landing page MVP
+
+- **Astro 6.x static landing page** for ciguard.dev. Output is plain HTML/CSS in `dist/` — no client-side JS, no analytics, no runtime, no telemetry. Cloudflare Pages serves the built directory directly.
+- **Page structure** (single `index.astro`): hero with brand mark + dual CTA (docs + GitHub); "What it produces" four cards (pipeline visualiser, infra inventory, multi-env topology, org-level dashboard); capability snapshot — 6 stats + 8 CLI verbs grid; "How it ships" four install tiles (PyPI, PyPI[mcp], GHCR, pre-commit); supply-chain provenance row (Sigstore, SBOM attestations, public Cycle 1 report); final CTA strip + footer.
+- **Visual coherence:** same dark-mode palette + typography as the in-app HTML deliverables (`html_interactive.py`, `topology_html.py`, `inventory_html.py`, `org_audit_html.py`) so the brand reads as one family across the marketing surface and the audit artifacts. Brand mark `CIGuard` (uppercase G with sky→indigo gradient) for the wordmark; identifier `ciguard` for code paths.
+- **Self-contained:** no external scripts, no fonts, no analytics. CSP in `public/_headers` reflects that — `default-src 'self'`, plus a documented `'unsafe-inline'` exception on `style-src` because Astro inlines per-component styles (LANDING-003, accepted architectural).
+
+#### Session 2 — Cloudflare Pages auto-deploy
+
+- **`.github/workflows/landing-deploy.yml`** — checkout → setup-node@22 → npm ci → npm run build → verify dist/index.html present → wrangler-action pages deploy. SHA-pinned actions: `actions/checkout v6.0.2`, `actions/setup-node v6.4.0`, `cloudflare/wrangler-action v3.15.0`. Concurrency group `landing-deploy` (last-push-wins). `paths-filter` scoped to `landing/**` so engine commits don't trigger marketing redeploys.
+- **Permissions trimmed** to `contents: read` + `deployments: write` (the Pages deployment record). Repo secrets: `CLOUDFLARE_API_TOKEN` (Pages:Edit + Zone:DNS:Edit, restricted to ciguard.dev) + `CLOUDFLARE_ACCOUNT_ID`. Scoped token rather than global API key matches the v0.9.1 deployment-hardening posture (least-privilege, revocable independently if leaked).
+- **`landing/wrangler.jsonc`** — Pages config as code: project name `ciguard`, output dir `./dist`, `compatibility_date 2026-05-02`. Build-settings changes go through PR review rather than dashboard hunting.
+- **`landing/README.md` rewritten "Deploy" section** — explicit 6-step cutover bootstrap (mint scoped Cloudflare API token → add 2 repo secrets → click "Add custom domain"). Workflow is dormant until secrets are present, so the commit doesn't change any external state on its own.
+- **Workflow does NOT gate** the engine's required status checks. CI / CodeQL / Dogfood / Code Scanning gate are unaffected by changes under `landing/**`.
+
+### Fixed — Slice 10 follow-up
+
+- **Brand mark applied to all six prose mentions** — header, hero lede, supply-chain provenance paragraph, final CTA, footer mark, footer copyright line (`© 2026 CIGuard contributors`). CSS adjustment: `.brand-mark` no longer hardcodes 20px so inline prose mentions inherit surrounding font size; header keeps the larger 20px via `.brand .brand-mark` scoped rule, footer keeps its existing `.footer-mark` 18px override.
+- **LANDING-001 — 404 page + robots.txt + sitemap.xml.** Layer-1 pentest of the deployed site (close-out at `Project ciguard/Pentest Reports/2026-05-02-landing-page.md`) flagged that all unknown paths returned HTTP 200 with the homepage body — Cloudflare Pages was doing SPA-style fallback because `dist/` had no `404.html`. Symptoms: search-engine duplicate content, masked recon probes (`/admin`, `/.git`, `/.env` all returning 200), confused operators on mistyped URLs. Three artifacts added: `src/pages/404.astro` (Astro auto-generates `dist/404.html`, served with real HTTP 404 when no other route matches; reuses Base layout so brand + headers stay consistent), `public/robots.txt` (explicit `User-agent: * / Allow: /` plus a `Sitemap:` pointer), `public/sitemap.xml` (single-URL sitemap). Mozilla Observatory grade unchanged at A+ (10/10, score 120) — this commit closes the recon-surface gap that Observatory's rubric doesn't measure but auditors do. LANDING-002 (CAA) remediated separately below; LANDING-003 (CSP `'unsafe-inline'` on style-src) accepted as Astro architectural.
+- **LANDING-002 — Cloudflare DNS-hardening helper** at `scripts/cloudflare_setup_ciguard_dev.sh`. One-shot, idempotent helper: adds CAA records pinning cert issuance to Google Trust Services + Let's Encrypt + DigiCert (matching Cloudflare Pages's auto-provisioner) plus an `iodef` reporting channel; optional `--enable-dnssec` toggle for the natural follow-on (closes the "hijack DNS, remove CAA, then issue rogue cert" path that CAA alone leaves open). Re-running detects existing matching records and skips, so it's safe in CI / cron / on-call runbooks. Looks up zone id by name (survives zone recreation). `--dry-run` for safe preview before committing changes. The script does NOT publish the DNSSEC DS record at the registrar — it prints the DS string + a deeplink to the Cloudflare registrar panel where you paste it (one-click since registrar = Cloudflare).
+- **pyjq tokeniser fix** in `scripts/cloudflare_setup_ciguard_dev.sh`. The pyjq helper was splitting the path expression on `|` only, never on `.` — so `.result.expires_on` was looked up as a single key `'result.expires_on'` on the response object instead of `result` then `expires_on`. The zone-resolve path `.result.[].id` happened to coincide with the correct token sequence by accident; `.result.expires_on` (and any other purely-dotted path) silently returned `{}`. Fix: tokenise into a flat list where `[]` is its own item and every other piece is dot-split. Verified end-to-end with a real run on ciguard.dev — 4 CAA records added, public DNS confirms via 1.1.1.1 + 8.8.8.8, idempotent re-run shows ✓ already present for all four.
+
+### Maintenance
+
+- **378 pytest DeprecationWarning hits → 0.** Three sites switched from `datetime.utcnow()` to `datetime.now(tz=timezone.utc)`: `models/pipeline.py` (`Report.scan_timestamp`), `models/inventory.py` (`InventoryReport.scan_timestamp`), `reporter/pdf_report.py` (PDF footer). Format shifts from `2026-05-02T13:00:00` to `2026-05-02T13:00:00+00:00` — functionally identical; downstream consumers slice `[:19]` / `[:10]` for display so rendered output is unchanged.
+- **Code-scanning quality alerts swept:**
+  - **#30** (py/unused-local-variable, `test_app_scheduler.py:86`) — real bug: the `_inner()` async test body was defined but never invoked via `_run(_inner)`. Test was passing vacuously. Added the missing call; assertions actually run now (and pass — the underlying fix from `1f65836` was correct).
+  - **#32 + #33** (py/unused-global-variable, `html_interactive.py:90, 97`) — vestigial `_SEVERITY_COLOURS` / `_NEUTRAL_BORDER` constants from an early Slice 14a draft; the palette was inlined into `_VIEWER_CSS` once the visual language stabilised.
+  - **#35** (py/repeated-import, `html_interactive.py:1582`) — local `import re as _re` shadowing the module-level alias.
+  - **#40** (py/ineffectual-statement, `inventory/probes.py:49`) dismissed in-API as documented false positive — `...` is the canonical PEP 544 Protocol-stub idiom.
+- **ruff F401/F841/E402 cleared, CI lint green.** 8 × F401 unused imports, 1 × F841 unused local in `sca_rules.py`, 1 × E402 import-not-at-top in `reporter/html_interactive.py`. Local pytest had been passing because lint isn't in the local test loop; CI's `checks/lint` step had been failing on every push since Slice 14b session 1.
+- **CodeQL py/bad-tag-filter regex tightening** (alerts #31 + #50). `test_no_external_script_references_in_html` matcher made case-insensitive (defensive — we ship lowercase, spec allows uppercase). `</script>` close-tag matcher broadened from `</script\s*>` to `</script[^>]*>` (matches HTML5-spec close tags carrying garbage attributes — `\s*` doesn't). Two CodeQL alerts dismissed in-API as documented false positives (#47, #48): both flag `secret_scopes` as "sensitive data" but the field carries operator-supplied LABELS for groups of secrets, never credential values.
 
 ### Documentation
 
