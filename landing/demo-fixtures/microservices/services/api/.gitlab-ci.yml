@@ -1,0 +1,18 @@
+stages: [test, build, deploy]
+
+test-api:
+  stage: test
+  image: python:3.11.4-slim
+  script: ['pytest tests/']
+
+build-api:
+  stage: build
+  image: docker:25.0
+  script:
+    - docker build -t api .
+
+deploy-api:
+  stage: deploy
+  image: alpine:3.19
+  script: ['echo deploy api']
+  when: manual

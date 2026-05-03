@@ -1,0 +1,55 @@
+---
+// Above-the-fold "what comes out of CIGuard" thumbnail strip.
+//
+// 4 PNGs, 2x retina, generated in CI from real ciguard output —
+// per-pipeline visualiser, multi-environment topology, infrastructure
+// inventory, org-level audit dashboard. Each thumbnail is a link to
+// the live demo HTML so a visitor can click straight through to a
+// working artifact rather than just a static image.
+
+interface Tile {
+  src: string;
+  href: string;
+  label: string;
+  blurb: string;
+}
+
+const tiles: Tile[] = [
+  {
+    src: "/screenshots/per-pipeline.png",
+    href: "/demos/per-pipeline-bad.html",
+    label: "Per-pipeline visualiser",
+    blurb: "DAG, severity, click-to-detail",
+  },
+  {
+    src: "/screenshots/topology.png",
+    href: "/demos/topology.html",
+    label: "Multi-environment topology",
+    blurb: "services × envs, gates, drift",
+  },
+  {
+    src: "/screenshots/inventory.png",
+    href: "/demos/inventory.html",
+    label: "Infrastructure inventory",
+    blurb: "Jenkins, GitLab, Nexus, ArgoCD…",
+  },
+  {
+    src: "/screenshots/org-dashboard.png",
+    href: "/demos/org-dashboard.html",
+    label: "Org-level audit dashboard",
+    blurb: "every repo, image inventory, drill-down",
+  },
+];
+---
+
+<div class="screenshot-strip">
+  {tiles.map((tile) => (
+    <a class="screenshot-tile" href={tile.href} target="_blank" rel="noopener">
+      <img src={tile.src} alt={`${tile.label} — example output`} loading="lazy" />
+      <div class="screenshot-meta">
+        <span class="screenshot-label">{tile.label}</span>
+        <span class="screenshot-blurb">{tile.blurb}</span>
+      </div>
+    </a>
+  ))}
+</div>

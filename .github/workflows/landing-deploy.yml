@@ -19,6 +19,12 @@ on:
     paths:
       - 'landing/**'
       - '.github/workflows/landing-deploy.yml'
+      # The landing build now generates demo HTML from the engine's
+      # reporters + fixtures. A reporter or rule change should refresh
+      # the embedded demos so the page never drifts behind the engine.
+      - 'src/ciguard/reporter/**'
+      - 'src/ciguard/analyzer/**'
+      - 'src/ciguard/repo_scan.py'
   workflow_dispatch:
 
 permissions:
@@ -34,7 +40,10 @@ concurrency:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    # Bumped from 8 → 15 to absorb the demo-build steps. Playwright
+    # cold-starts Chromium (one-shot ~30s) and ciguard-from-source
+    # installs ~300 MB of deps; combined slack ~5 min.
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: landing
@@ -47,8 +56,37 @@ jobs:
           cache: npm
           cache-dependency-path: landing/package-lock.json
 
-      - name: Install dependencies
+      # ---- Demo HTML + screenshot generation (Slice 10 session 3) ----
+      # Runs BEFORE Astro build so the generated artifacts under
+      # landing/public/{demos,screenshots}/ are picked up by Astro's
+      # `public/` → `dist/` copy step.
+
+      - name: Set up Python (for demo generation)
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install ciguard from source
+        # Editable install of the live engine — same code that ships;
+        # the demos a visitor sees match the version on PyPI/GHCR.
+        working-directory: ${{ github.workspace }}
+        run: pip install --upgrade pip && pip install -e .
+
+      - name: Install npm dependencies
         run: npm ci
+
+      - name: Install Playwright browsers
+        # Chromium-only — we only screenshot, no Firefox/WebKit needed.
+        # `--with-deps` pulls system fonts + libs the headless browser
+        # requires on the GitHub-hosted Ubuntu image.
+        run: npx playwright install --with-deps chromium
+
+      - name: Generate demo HTML artifacts
+        run: npm run build:demos
+
+      - name: Generate screenshot strip
+        run: npm run build:screenshots
 
       - name: Build static site
         run: npm run build
@@ -57,9 +95,13 @@ jobs:
         # Sanity check before publishing. Catches the dev-server
         # / SSR / mis-configuration regression class — `dist/` MUST
         # exist + contain `index.html` for Pages to serve anything.
+        # Also asserts demo artifacts were copied through Astro's
+        # public/ → dist/ pipeline so the iframes don't 404.
         run: |
           test -f dist/index.html || (echo "::error::dist/index.html missing — build failed silently" && exit 1)
           test -f dist/_headers || echo "::warning::dist/_headers missing — security headers won't be served"
+          test -f dist/demos/per-pipeline-bad.html || (echo "::error::demo HTML missing in dist/ — build_demos.py output not picked up" && exit 1)
+          test -f dist/screenshots/per-pipeline.png || (echo "::error::screenshots missing in dist/ — Playwright output not picked up" && exit 1)
           echo "dist/ contents:"
           find dist -type f | sort
 

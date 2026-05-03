@@ -8,10 +8,17 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "astro": "astro"
+    "astro": "astro",
+    "build:demos": "python3 scripts/build_demos.py",
+    "build:screenshots": "node scripts/build-screenshots.mjs",
+    "build:assets": "npm run build:demos && npm run build:screenshots",
+    "build:all": "npm run build:assets && npm run build"
   },
   "dependencies": {
     "astro": "^6.2.1"
+  },
+  "devDependencies": {
+    "playwright": "^1.59.1"
   },
   "engines": {
     "node": ">=20.0.0"

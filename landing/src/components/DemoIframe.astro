@@ -1,0 +1,39 @@
+---
+// Single embedded demo deliverable.
+//
+// Sandbox notes (security review 2026-05-03):
+//   - same-origin (cloudflare pages, no auth surface, no cookies)
+//   - sandbox="allow-scripts" — D3 needs JS; we deliberately OMIT
+//     allow-same-origin so the embed can't read the parent's storage
+//     even though they share a domain
+//   - loading="lazy" so the ~350KB inline-D3 payload doesn't block
+//     initial paint
+//   - title attribute for screen readers (the iframe content is a
+//     visual deliverable; the title gives non-sighted users context
+//     before they tab into the inner document)
+
+interface Props {
+  src: string;
+  title: string;
+  caption?: string;
+  height?: number;
+}
+
+const { src, title, caption, height = 720 } = Astro.props;
+---
+
+<figure class="demo-frame">
+  <iframe
+    src={src}
+    title={title}
+    loading="lazy"
+    sandbox="allow-scripts"
+    style={`height: ${height}px;`}
+  ></iframe>
+  <figcaption>
+    <span class="demo-caption">{caption ?? title}</span>
+    <a class="demo-fullscreen" href={src} target="_blank" rel="noopener">
+      Open in new tab ↗
+    </a>
+  </figcaption>
+</figure>

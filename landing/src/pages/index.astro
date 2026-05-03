@@ -1,5 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
+import DemoIframe from "../components/DemoIframe.astro";
+import ScreenshotStrip from "../components/ScreenshotStrip.astro";
 ---
 
 <Base
@@ -38,6 +40,8 @@ import Base from "../layouts/Base.astro";
         Every artifact is a self-contained HTML file with vendored D3 inline.
         Open it in any browser, no server needed. Print to PDF for the audit pack.
       </p>
+
+      <ScreenshotStrip />
 
       <div class="cards">
         <div class="card">
@@ -96,6 +100,62 @@ import Base from "../layouts/Base.astro";
             <span class="card-chip">pin-discipline %</span>
             <span class="card-chip">drill-down</span>
           </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="surface">
+    <div class="section-inner">
+      <div class="section-eyebrow">See the deliverable</div>
+      <h2>Live, in your browser. No install required.</h2>
+      <p class="muted">
+        The frame below is the <em>actual</em> HTML output of running
+        <code>ciguard scan --format html-interactive</code> against a
+        deliberately-flawed GitLab pipeline. Click the per-job cards,
+        try the severity filters, search the findings, open the new
+        Pipeline-level filter — every interaction works exactly as
+        it does on the auditor's laptop.
+      </p>
+
+      <DemoIframe
+        src="/demos/per-pipeline-bad.html"
+        title="Live ciguard per-pipeline visualiser demo (deliberately-flawed pipeline)"
+        caption="Per-pipeline visualiser · scan against a deliberately-flawed GitLab pipeline · showing the v0.11.2 pipeline-globals banner + every interactive surface"
+      />
+    </div>
+  </section>
+
+  <section class="surface">
+    <div class="section-inner">
+      <div class="section-eyebrow">Shape comparison</div>
+      <h2>Monolith vs. microservices, side-by-side.</h2>
+      <p class="muted">
+        Two repos, same toolchain, very different posture. The monolith on the
+        left is a single tightly-pinned pipeline; the microservices service
+        on the right shows the pin-discipline drift the org dashboard would
+        flag at scale (different python / docker / alpine versions across
+        sibling services).
+      </p>
+
+      <div class="demo-pair">
+        <div>
+          <span class="demo-pair-label">monolith</span>
+          <DemoIframe
+            src="/demos/monolith.html"
+            title="Live monolith pipeline scan"
+            caption="Monolith · single pipeline file · consistent pinning"
+            height={600}
+          />
+        </div>
+        <div>
+          <span class="demo-pair-label">microservices · worker</span>
+          <DemoIframe
+            src="/demos/microservices-worker.html"
+            title="Live microservices worker pipeline scan"
+            caption="Microservices · worker service · drifts vs sibling api / web pipelines"
+            height={600}
+          />
         </div>
       </div>
     </div>

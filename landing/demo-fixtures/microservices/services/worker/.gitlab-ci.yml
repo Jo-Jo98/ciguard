@@ -1,0 +1,21 @@
+stages: [test, build, deploy]
+
+# NB: deliberate cross-pipeline drift — `python` is referenced as
+# 3.11.4 in the api service but as 3.12 here. SCA-PIN-003 fires on this.
+test-worker:
+  stage: test
+  image: python:3.12
+  script: ['pytest tests/']
+
+# Also: docker version drift (25.0 in api/web vs 24.0 here)
+build-worker:
+  stage: build
+  image: docker:24.0
+  script:
+    - docker build -t worker .
+
+deploy-worker:
+  stage: deploy
+  image: alpine:3.18
+  script: ['echo deploy worker']
+  when: manual

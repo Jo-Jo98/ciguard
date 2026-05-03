@@ -1,0 +1,89 @@
+# Sample ciguard.topology.yml — used by the topology test suite as a
+# realistic shape (3 services across 4 envs with promotion gates and a
+# shared secret scope between staging and prod).
+
+services:
+  - id: api
+    name: User API
+    repo: example/api
+    tags: [backend]
+  - id: web
+    name: Web frontend
+    repo: example/web
+    tags: [frontend]
+  - id: worker
+    name: Background worker
+    repo: example/worker
+    tags: [backend, async]
+
+environments:
+  - id: dev
+    tier: development
+    region: eu-west-1
+    network_segment: shared
+  - id: test
+    tier: test
+    region: eu-west-1
+    network_segment: shared
+  - id: staging
+    tier: staging
+    region: eu-west-1
+    network_segment: production
+  - id: prod
+    tier: production
+    region: eu-west-1
+    network_segment: production
+
+deploy_edges:
+  - service: api
+    environment: dev
+    pipeline: .github/workflows/deploy-dev.yml
+    gates: []
+  - service: api
+    environment: staging
+    pipeline: .github/workflows/deploy-staging.yml
+    gates: [branch_protection]
+  - service: api
+    environment: prod
+    pipeline: .github/workflows/deploy-prod.yml
+    gates: [manual_approval, required_reviewer, branch_protection]
+  - service: web
+    environment: prod
+    pipeline: .github/workflows/web-deploy.yml
+    gates: [manual_approval]
+  - service: worker
+    environment: prod
+    pipeline: .gitlab-ci.yml
+    gates: []                # deliberately gateless to exercise the auditor warning
+
+transitions:
+  - from: dev
+    to: test
+    gates: [required_status_check]
+  - from: test
+    to: staging
+    gates: [required_status_check]
+  - from: staging
+    to: prod
+    gates: [manual_approval]
+  - from: dev
+    to: prod
+    gates: []                # gateless dev→prod is the auditor's red flag
+
+secret_scopes:
+  - id: prod-db
+    description: Production database credentials
+    environments: [prod]
+    services: [api, worker]
+  - id: shared-monitoring
+    description: Datadog API key shared across all envs
+    environments: [dev, test, staging, prod]
+    services: [api, web, worker]
+
+network_segments:
+  - id: shared
+    description: CI runners + dev environments
+    can_reach: [production]
+  - id: production
+    description: Production-class workloads
+    can_reach: []
