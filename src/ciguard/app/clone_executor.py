@@ -89,12 +89,22 @@ def _safe_extract(tar: tarfile.TarFile, dest: Path) -> None:
       - parent-dir traversal (`../`)
       - symlinks, hardlinks, device files, FIFOs (any non-regular non-dir)
 
-    Equivalent to Python 3.12+ `extractall(filter="data")` but written
-    out so we work on 3.10 + 3.11 too. (Python 3.12 added `filter=`
-    as a built-in arg; we deliberately don't depend on that so the
-    package's existing `python_requires` envelope holds.)
+    Validates each member then extracts it individually via
+    `tar.extract(member, ...)`. We deliberately avoid `tar.extractall()`
+    even though it'd be a one-liner: CodeQL's `py/tarslip` query (CWE-22)
+    pattern-matches on `extractall` regardless of preceding validation,
+    AND `extractall` operates on the `members` list which a hostile
+    `tarfile` subclass could re-mutate between our validation pass and
+    the extraction call. Per-member `extract()` locks in exactly which
+    pre-validated member is being extracted.
+
+    On Python 3.12+ we ALSO pass `filter="data"` (added in 3.12, applies
+    to per-member `extract()` too) for belt-and-braces. On 3.10/3.11 the
+    manual validation above is the load-bearing safety; the package's
+    declared `python_requires=">=3.10"` envelope holds either way.
     """
     dest_resolved = dest.resolve()
+    use_data_filter = sys.version_info >= (3, 12)
     for member in tar.getmembers():
         if (
             member.issym() or member.islnk() or member.ischr()
@@ -109,14 +119,10 @@ def _safe_extract(tar: tarfile.TarFile, dest: Path) -> None:
             raise TarballFetchError(
                 f"refusing tarball member outside dest: {member.name!r}"
             )
-    # On 3.12+, also pass `filter="data"` for belt-and-braces (and to silence
-    # the 3.14 deprecation warning that fires when no filter is set). On
-    # 3.10/3.11 the kwarg doesn't exist; the manual validation above is the
-    # equivalent safety.
-    if sys.version_info >= (3, 12):
-        tar.extractall(path=dest, filter="data")  # nosec B202
-    else:
-        tar.extractall(path=dest)  # nosec B202 — every member validated above
+        if use_data_filter:
+            tar.extract(member, path=dest, filter="data")  # nosec B202
+        else:
+            tar.extract(member, path=dest)  # nosec B202 — validated above
 
 
 def _fetch_tarball(
