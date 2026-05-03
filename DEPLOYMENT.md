@@ -209,9 +209,9 @@ docker run --rm -d \
   ciguard app --host 0.0.0.0 --port 8000
 ```
 
-Front this with the same reverse proxy from §5 (the proxy lives on the host or another container; the App container itself binds inside the user-defined network).
+Front this with the same reverse proxy from Section 5 (the proxy lives on the host or another container; the App container itself binds inside the user-defined network).
 
-`--cap-drop=ALL` + `no-new-privileges` removes `CAP_SYS_PTRACE`, which is the primary kernel-level attack vector against the in-memory private key (per `THREAT_MODEL.md` Surface 9 row 9.8 / Cycle 1.5 §1.7 in the report).
+`--cap-drop=ALL` + `no-new-privileges` removes `CAP_SYS_PTRACE`, which is the primary kernel-level attack vector against the in-memory private key (per `THREAT_MODEL.md` Surface 9 row 9.8 / Cycle 1.5 Section 1.7 in the report).
 
 ## 8. Storage layout
 
@@ -293,14 +293,14 @@ Rolling back is the same operation in reverse. Baseline files written by a newer
 
 Before opening the public install link:
 
-- [ ] App registered with the four (not five) permissions from §2.1
+- [ ] App registered with the four (not five) permissions from Section 2.1
 - [ ] Cycle 1.5 self-pentest closed green (or the equivalent for your fork) — see `Project ciguard/Pentest Reports/2026-05-03-cycle-1.5.md` for the Cycle 1.5 reference
-- [ ] Process running as a dedicated non-root UID (§4)
-- [ ] Reverse proxy terminating TLS (§5)
-- [ ] systemd hardening directives in place (§6) OR container running with `--cap-drop=ALL --security-opt no-new-privileges` (§7)
-- [ ] `CIGUARD_APP_PRIVATE_KEY_PATH` file is `0600`-mode owned by the process UID (§3.1)
-- [ ] Backup of `CIGUARD_APP_STORAGE_ROOT` configured (§8)
-- [ ] Alerting on `/webhook` 401 rate, 503 rate, and repeated `set_check_run_failed` (§9)
+- [ ] Process running as a dedicated non-root UID (Section 4)
+- [ ] Reverse proxy terminating TLS (Section 5)
+- [ ] systemd hardening directives in place (Section 6) OR container running with `--cap-drop=ALL --security-opt no-new-privileges` (Section 7)
+- [ ] `CIGUARD_APP_PRIVATE_KEY_PATH` file is `0600`-mode owned by the process UID (Section 3.1)
+- [ ] Backup of `CIGUARD_APP_STORAGE_ROOT` configured (Section 8)
+- [ ] Alerting on `/webhook` 401 rate, 503 rate, and repeated `set_check_run_failed` (Section 9)
 - [ ] First webhook from a real install seen — `/healthz` returns 200, signed-ping returns 202, unsigned-ping returns 401
 
 When all eleven boxes tick, the App is ready for production.
