@@ -8,16 +8,21 @@ service:
   - Scheduler from `scheduler.py` (idempotency + bounded queue + per-
     repo lock) attached to `app.state.scheduler` so the webhook
     handler reaches it via `request.app.state.scheduler.enqueue(...)`.
-  - Scan executor injected at startup. v0.10.0 ships a STUB executor
-    (returns a "scan-not-yet-implemented" result that still posts a
-    Check Run + PR comment so the receiver wiring is verifiable end-
-    to-end). v0.10.1 wires the real executor that clones the repo via
-    the installation token and runs `ciguard scan-repo` against it.
+  - Scan executor injected at startup. v0.11.1 default is the real
+    `clone_and_scan_executor`: fetches the repo tarball at head SHA via
+    the installation token, extracts under a `tempfile.TemporaryDirectory`,
+    runs `repo_scan.scan_repo(include_findings=True)` against it,
+    translates the result to the PR-comment-renderer shape. Tests
+    inject a stub by passing `scan_executor=` to `create_app()`.
 
-The stub is honest about its scope: every scan posts a comment that
-explicitly says "ciguard receiver wired; scan execution lands in
-v0.10.1" so installers can confirm the App is reachable without being
-misled into thinking they're getting real findings yet.
+History:
+  - v0.10.0 shipped the receiver wiring with `_stub_scan_executor`
+    (returned a placeholder result so Check Run + PR comment plumbing
+    was verifiable end-to-end without yet cloning repos).
+  - v0.11.1 replaces the default with `clone_and_scan_executor`. The
+    stub remains exported for tests + as a safety fallback for any
+    deployment that hasn't yet wired App credentials (the stub doesn't
+    need a token).
 """
 from __future__ import annotations
 
@@ -27,6 +32,7 @@ from typing import Any, AsyncIterator, Optional
 
 from fastapi import FastAPI
 
+from .clone_executor import clone_and_scan_executor
 from .scan_runner import run_scan
 from .scheduler import ScanJob, ScanScheduler
 from .webhook import router as webhook_router
@@ -34,15 +40,15 @@ from .webhook import router as webhook_router
 logger = logging.getLogger("ciguard.app.factory")
 
 
-# ---- Stub scan executor (v0.10.0) ------------------------------------------
+# ---- Stub scan executor (kept for tests + as a safety fallback) -----------
 
 
 async def _stub_scan_executor(job: ScanJob) -> dict[str, Any]:
-    """Returns a placeholder scan result so v0.10.0 can demonstrate
-    end-to-end webhook → Check Run + PR comment plumbing without yet
-    cloning repos or running real scans. Replaced in v0.10.1 by the
-    real executor (clone via installation token; run ciguard scan-repo
-    against the local checkout)."""
+    """Placeholder scan result for tests + deployments without App
+    credentials. v0.10.0 used this as the default; v0.11.1 promotes
+    `clone_and_scan_executor` to the default. Tests still inject this
+    via `create_app(scan_executor=_stub_scan_executor)` to keep
+    Check Run + PR comment plumbing tests independent of the network."""
     logger.info(
         "stub executor handling job (installation=%d repo=%s head=%s)",
         job.installation_id, job.repo_full_name, job.head_sha[:7],
@@ -52,9 +58,8 @@ async def _stub_scan_executor(job: ScanJob) -> dict[str, Any]:
         "grade": "A",
         "findings": [],
         "summary": (
-            "ciguard receiver wired; actual scan execution lands in "
-            "v0.10.1. The Check Run + PR comment plumbing on this PR "
-            "is real — only the rule-evaluation step is stubbed."
+            "ciguard receiver wired with stub executor. Inject a real "
+            "executor via create_app(scan_executor=...) for production."
         ),
     }
 
@@ -66,7 +71,7 @@ async def _stub_scan_executor(job: ScanJob) -> dict[str, Any]:
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     """FastAPI lifespan — start scheduler at app startup, drain on
     shutdown. Replaces the deprecated @app.on_event hooks."""
-    executor = getattr(app.state, "scan_executor", None) or _stub_scan_executor
+    executor = getattr(app.state, "scan_executor", None) or clone_and_scan_executor
 
     async def scan_fn(job: ScanJob) -> None:
         await run_scan(job, executor)
@@ -92,9 +97,10 @@ def create_app(
     """Build a FastAPI instance ready for `uvicorn` to serve.
 
     Args:
-      scan_executor: Optional injection point. Defaults to the v0.10.0
-        stub. Tests pass their own; v0.10.1 will pass a real
-        clone-and-scan executor.
+      scan_executor: Optional injection point. Defaults to
+        `clone_and_scan_executor` (v0.11.1, fetches tarball + runs
+        `repo_scan.scan_repo`). Tests pass `_stub_scan_executor` or a
+        custom mock to keep network-free.
     """
     app = FastAPI(
         title="ciguard GitHub App",
