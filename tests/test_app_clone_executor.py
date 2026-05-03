@@ -108,7 +108,8 @@ def test_fetch_tarball_extracts_to_single_top_level_dir(tmp_path: Path):
 def test_fetch_tarball_token_used_in_authorization_header_not_url(tmp_path: Path):
     repo = _make_repo_dir(tmp_path)
     tarball_bytes = _make_tarball(repo)
-    dest = tmp_path / "dl"; dest.mkdir()
+    dest = tmp_path / "dl"
+    dest.mkdir()
     captured = {}
 
     def fake_urlopen(req, timeout):
@@ -134,7 +135,8 @@ def test_fetch_tarball_aborts_when_size_cap_exceeded(tmp_path: Path):
     # We patch MAX_TARBALL_BYTES rather than building a 200MB+ tarball.
     repo = _make_repo_dir(tmp_path)
     tarball_bytes = _make_tarball(repo)
-    dest = tmp_path / "dl"; dest.mkdir()
+    dest = tmp_path / "dl"
+    dest.mkdir()
 
     with patch.object(clone_executor, "MAX_TARBALL_BYTES", 100):  # 100 bytes cap
         with patch.object(clone_executor.tokens, "get_installation_token", return_value="ghs_fake"):
@@ -151,7 +153,8 @@ def test_fetch_tarball_401_invalidates_token_cache(tmp_path: Path):
     contract — when the API returns 401, the executor MUST purge the cached
     token before re-raising so the next mint re-exchanges JWT."""
     import urllib.error
-    dest = tmp_path / "dl"; dest.mkdir()
+    dest = tmp_path / "dl"
+    dest.mkdir()
     err = urllib.error.HTTPError(
         url="http://x", code=401, msg="Unauthorized", hdrs=None, fp=io.BytesIO(b""),
     )
@@ -175,13 +178,18 @@ def test_fetch_tarball_unexpected_layout_raises(tmp_path: Path):
     # Build a tarball with TWO top-level dirs.
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        a = tmp_path / "a"; a.mkdir(); (a / "f").write_text("a")
-        b = tmp_path / "b"; b.mkdir(); (b / "f").write_text("b")
+        a = tmp_path / "a"
+        a.mkdir()
+        (a / "f").write_text("a")
+        b = tmp_path / "b"
+        b.mkdir()
+        (b / "f").write_text("b")
         tar.add(str(a), arcname="dir-a")
         tar.add(str(b), arcname="dir-b")
     weird_bytes = buf.getvalue()
 
-    dest = tmp_path / "dl"; dest.mkdir()
+    dest = tmp_path / "dl"
+    dest.mkdir()
     with patch.object(clone_executor.tokens, "get_installation_token", return_value="ghs_fake"):
         with patch.object(clone_executor.urllib.request, "urlopen", return_value=_FakeResponse(weird_bytes)):
             with pytest.raises(clone_executor.TarballFetchError, match="unexpected tarball layout"):
