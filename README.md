@@ -248,11 +248,13 @@ Pre-built workflow files for the three supported platforms live under [`template
 
 All templates pin ciguard to a specific version (currently `0.9.4`) — never `:latest`. Bump the pin when you want to upgrade; release notes live at [github.com/Jo-Jo98/ciguard/releases](https://github.com/Jo-Jo98/ciguard/releases).
 
-## Running the GitHub App (v0.10.0)
+## Running the GitHub App (v0.11.1)
 
 ciguard ships with an optional GitHub App receiver that scans pull requests on every push and posts results back as a Check Run + PR comment. It runs as a small FastAPI service you self-host alongside your CI.
 
-> **v0.10.0 status:** the receiver, JWT broker, async scheduler, Check Run + PR comment, per-installation storage namespacing, and CLI launcher are all shipped. The actual scan-against-real-repo execution is stubbed in v0.10.0 (every Check Run posts a "ciguard receiver wired; scan execution lands in v0.10.1" notice). v0.10.1 will wire the real clone-and-scan path. The stub is honest: deploy v0.10.0 to verify your wiring works end-to-end without yet getting fake findings.
+> **Production-deploy guide:** [DEPLOYMENT.md](DEPLOYMENT.md) — UID isolation, systemd unit with hardening directives, container layout, reverse-proxy + TLS, secret material, env-var contract, observability, pre-flight checklist.
+
+> **v0.11.1 status:** receiver + JWT broker + async scheduler + Check Run + PR comment + per-installation storage namespacing **+ real scan executor** (v0.11.1 replaced v0.10.0's stub). The receiver fetches the repo tarball at the head SHA via the installation token, extracts it under a temp dir with `tarfile filter='data'` safety, and runs the in-process scan engine against it. Self-pentested in Cycle 1.5 (2026-05-03) — full report at `Pentest Reports/2026-05-03-cycle-1.5.md` in the planning vault.
 
 ### Install
 
