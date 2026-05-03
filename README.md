@@ -266,7 +266,7 @@ The `[app]` extra adds `PyJWT[crypto]` (~30MB for the `cryptography` dependency)
 
 ### Register the App
 
-A reviewable manifest lives at [`deploy/app/manifest.yml`](deploy/app/manifest.yml). The permission set is intentionally minimal — `Actions: read`, `Contents: read`, `Pull requests: write`, `Checks: write`, `Metadata: read`. Any future expansion goes through a manifest-diff review, never silently in app code.
+A reviewable manifest lives at [`deploy/app/manifest.yml`](deploy/app/manifest.yml). The permission set is intentionally minimal — `Contents: read`, `Pull requests: write`, `Checks: write`, `Metadata: read`. `Actions: read` is **not** requested: the v0.11.x scan executor reaches workflow YAML via the tarball clone (covered by `Contents: read`). Any future expansion goes through a manifest-diff review, never silently in app code.
 
 To create the App on GitHub:
 

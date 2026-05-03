@@ -5,6 +5,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.2] — 2026-05-03
+
+**Highlights:** Cycle 1.5 cleanup release — closes the four follow-up issues filed at v0.11.1 (#20–#23). One small defence-in-depth code change in the App private-key loader, one belt-and-braces strict-OWS check on the webhook signature header, and two documentation patches. No new features. Test count: 977 → 985 (+8).
+
+### Security / hardening
+
+- **Issue [#22](https://github.com/Jo-Jo98/ciguard/issues/22) — App private-key file mode lint (Cycle 1.5 finding A1).** `tokens.py::_load_private_key()` now `os.stat()`s the path supplied via `CIGUARD_APP_PRIVATE_KEY_PATH` and emits a `WARNING` if the mode permits group or world access (i.e. `mode & 0o077 != 0`). The warning recommends `chmod 600` and uses the basename only — never the full path. **Warns, does NOT raise** — dev workflows often run with whatever mode the secret-injector landed; the operator's filesystem permissions are still the primary control. Defence-in-depth so a CI-deployed `.pem` accidentally landed at 0644 is surfaced at startup rather than silently. Four new tests cover 0644 / 0640 / 0600 / no-path-leak invariants.
+- **Issue [#23](https://github.com/Jo-Jo98/ciguard/issues/23) — Strict-OWS rejection on `X-Hub-Signature-256` (Cycle 1.5 finding F-9.1.1).** `webhook.py::_verify_signature()` now raises 401 if the supplied header value differs from `value.strip()` — leading or trailing ASCII OWS is no longer accepted. **Important honesty note:** under the canonical Uvicorn-on-h11 deploy, this check is a **no-op** because h11 strips OWS per RFC 7230 Section 3.2.4 *before* the ASGI handler ever sees the value (empirically verified during this fix). The check is load-bearing if a future deploy switches ASGI server (Hypercorn, Daphne, a pure-asyncio stack) or fronts the App with a quirky proxy that doesn't strip. Operators who want WAF-aligned strict parsing in the canonical Uvicorn deploy should add the new nginx / Apache snippets in `DEPLOYMENT.md` Section 5 ("Strict-OWS rejection at the proxy"). The HMAC over the request body remains the load-bearing control either way; F-9.1.1 was Info severity (CVSS 0.0) with no exploitation chain. Three new direct unit tests + one path-pinning test + a standalone PoC at `tests/regression/cycle1.5/F-9.1.1-ows-signature.py`.
+
+### Documentation
+
+- **Issue [#20](https://github.com/Jo-Jo98/ciguard/issues/20) — `Actions: read` removed from the App permission spec (Cycle 1.5 finding A2).** `THREAT_MODEL.md` Surface 9 row, the manifest at `deploy/app/manifest.yml`, the README "Register the App" section, and the `DEPLOYMENT.md` manifest-drift callout all now reflect the four-permission spec the registered ciguard App on github.com actually runs under (`Contents: read`, `Pull requests: write`, `Checks: write`, `Metadata: read`). The v0.11.x scan executor reaches workflow YAML via the tarball clone (covered by `Contents: read`) — the Actions API is never called. The `DEPLOYMENT.md` "manifest drift" warning callout that promised this patch is removed.
+- **Issue [#21](https://github.com/Jo-Jo98/ciguard/issues/21) — `_enforce_size_cap()` docstring expanded (Cycle 1.5 row 10.6 Info).** The MCP redaction layer's response-cap function now documents the behavioural delta surfaced during Cycle 1.5: when the cap fires, list-shaped sub-payloads are clipped to a fixed 25-element slice rather than packed-to-just-under-cap, plus the empirical 1.6 MB → ~27 KB example from row 10.6. Behaviour unchanged — the docstring now matches the long-standing intent (a fixed marker forces consumers to detect "this is not the full set" deterministically).
+
+### Engineering hygiene
+
+- **Test count:** 977 → 985 (+8). Four `_load_private_key` mode-warning tests, three `_verify_signature` OWS-rejection tests, one path-pinning test for the existing internal-whitespace-via-mismatch case.
+- **Cycle 1.5 backlog:** all four post-cycle issues now closed. Cycle 1.5 self-pentest closes fully green; the next reportable surface is Cycle 2 on 2026-10-15.
+
 ## [0.11.1] — 2026-05-03
 
 **Highlights:** The GitHub App receiver now ships a real scan executor — v0.10.0's stub is gone. On every webhook, the App mints an installation token, fetches the repo tarball at the head SHA from `GET /repos/{o}/{r}/tarball/{ref}`, extracts it under a `tempfile.TemporaryDirectory()` with per-member validation, runs `repo_scan.scan_repo(include_findings=True)` against the extracted tree, and posts the findings back as a Check Run + PR comment. v0.11.1 also closes the only finding from the Cycle 1.5 self-pentest (F-9.6.1, NUL bytes in `_safe_md_inline`), adds a 12-section production-deploy guide (`DEPLOYMENT.md`), and fixes a CodeQL `py/tarslip` advisory by switching `tar.extractall()` to per-member `tar.extract()`. Test count: 962 → 977 (+15).

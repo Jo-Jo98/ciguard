@@ -86,6 +86,23 @@ def _verify_signature(body: bytes, signature_header: Optional[str]) -> None:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing X-Hub-Signature-256.",
         )
+    # Strict-parse defence-in-depth — reject any leading/trailing ASCII OWS
+    # that survived the HTTP layer. Cycle 1.5 finding F-9.1.1 (issue #23):
+    # under canonical Uvicorn-on-h11, leading SPACE/TAB is stripped by the
+    # HTTP parser BEFORE the ASGI handler sees it, so this check is a no-op
+    # against that deploy. It IS load-bearing if a future deploy switches
+    # ASGI server (Hypercorn / Daphne / a pure-asyncio stack), or if a
+    # quirky upstream proxy injects OWS that doesn't get stripped. Operators
+    # that need WAF-alignment against the Uvicorn case should add the
+    # nginx strict-header snippet from DEPLOYMENT.md Section 5.
+    if signature_header != signature_header.strip():
+        logger.warning(
+            "rejecting webhook: X-Hub-Signature-256 carries leading/trailing OWS"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Malformed X-Hub-Signature-256 (whitespace in header value).",
+        )
     if not signature_header.startswith(SIGNATURE_PREFIX):
         logger.warning(
             "rejecting webhook: malformed X-Hub-Signature-256 prefix"

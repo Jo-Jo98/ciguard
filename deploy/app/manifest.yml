@@ -45,11 +45,15 @@ hook_attributes:
 
 # Permission set — minimal, by design. Each line is intentional.
 # THREAT_MODEL Surface 9: "App permissions over-scoped" closes here.
+#
+# Actions:read is DELIBERATELY OMITTED. The v0.11.x scan executor fetches
+# the repo via GET /repos/{o}/{r}/tarball/{ref} (covered by contents:read);
+# workflow YAML arrives as part of the tarball, not via the Actions API.
+# Matches the four-perm spec the registered ciguard App on github.com runs
+# under. Cycle 1.5 finding A2 (issue #20).
 default_permissions:
-  # Read workflow YAML — that's the scan target on GitHub Actions repos.
-  actions: read
-  # Read repo content (Jenkinsfile, .gitlab-ci.yml, source files referenced
-  # by the workflow).
+  # Read repo content: workflow YAML, .gitlab-ci.yml, Jenkinsfile, source
+  # files reachable via the tarball clone.
   contents: read
   # Post review comments on PRs. Required surface for the inline
   # findings UX.

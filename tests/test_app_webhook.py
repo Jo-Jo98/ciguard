@@ -485,3 +485,73 @@ def test_logger_never_emits_secret_or_supplied_signature(
     assert WEBHOOK_SECRET not in text
     # Full presented signature must not be logged; only a 6-char prefix.
     assert "f" * 64 not in text
+
+
+# ---- F-9.1.1 / issue #23 — strict OWS rejection (defence-in-depth) ----------
+#
+# Cycle 1.5 finding F-9.1.1: leading ASCII SPACE / TAB in the signature
+# header value is silently accepted under canonical Uvicorn-on-h11 because
+# h11 strips OWS per RFC 7230 Section 3.2.4 BEFORE the ASGI handler runs.
+# `_verify_signature` now rejects any value that survives transport with
+# leading or trailing OWS. Under TestClient + Uvicorn the strip already
+# happened upstream, so we exercise the unit function directly to prove
+# the strict check would fire if the OWS DID reach the handler (e.g. via
+# Hypercorn / Daphne / a non-stripping proxy).
+
+
+def test_signature_with_leading_space_rejected_at_strict_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Direct unit test on _verify_signature: leading SPACE → 401."""
+    from fastapi import HTTPException
+    monkeypatch.setenv(config.WEBHOOK_SECRET_ENV, WEBHOOK_SECRET)
+    body = b'{"action":"opened"}'
+    valid_sig = _sign(body)
+    with pytest.raises(HTTPException) as excinfo:
+        webhook._verify_signature(body, " " + valid_sig)
+    assert excinfo.value.status_code == 401
+    assert "whitespace" in excinfo.value.detail.lower()
+
+
+def test_signature_with_leading_tab_rejected_at_strict_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Direct unit test on _verify_signature: leading TAB → 401."""
+    from fastapi import HTTPException
+    monkeypatch.setenv(config.WEBHOOK_SECRET_ENV, WEBHOOK_SECRET)
+    body = b'{"action":"opened"}'
+    valid_sig = _sign(body)
+    with pytest.raises(HTTPException) as excinfo:
+        webhook._verify_signature(body, "\t" + valid_sig)
+    assert excinfo.value.status_code == 401
+    assert "whitespace" in excinfo.value.detail.lower()
+
+
+def test_signature_with_trailing_whitespace_rejected_at_strict_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Trailing OWS is also rejected (RFC 7230 strips both ends; we mirror)."""
+    from fastapi import HTTPException
+    monkeypatch.setenv(config.WEBHOOK_SECRET_ENV, WEBHOOK_SECRET)
+    body = b'{"action":"opened"}'
+    valid_sig = _sign(body)
+    with pytest.raises(HTTPException) as excinfo:
+        webhook._verify_signature(body, valid_sig + " ")
+    assert excinfo.value.status_code == 401
+
+
+def test_signature_with_internal_whitespace_still_rejected_via_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Whitespace AFTER the sha256= prefix isn't OWS; falls through to the
+    HMAC-mismatch path (which already rejected it pre-#23). Both pre- and
+    post-fix behaviour give a 401 here — this test pins the path."""
+    from fastapi import HTTPException
+    monkeypatch.setenv(config.WEBHOOK_SECRET_ENV, WEBHOOK_SECRET)
+    body = b'{"action":"opened"}'
+    valid_sig = _sign(body)
+    # Insert a space after sha256= but before the hex.
+    spliced = "sha256= " + valid_sig[len("sha256="):]
+    with pytest.raises(HTTPException) as excinfo:
+        webhook._verify_signature(body, spliced)
+    assert excinfo.value.status_code == 401

@@ -30,8 +30,6 @@ You need:
    - Create from `deploy/app/manifest.yml` via `https://github.com/settings/apps/new` → "Create from manifest" (preferred — the manifest is the canonical permission set per `THREAT_MODEL.md` Surface 9), OR
    - Create manually with exactly these permissions: **Pull requests: Read+Write**, **Checks: Read+Write**, **Contents: Read**, **Metadata: Read** (and no others). Subscribe to events: `pull_request`, `push`, `check_run`, `check_suite`.
 
-   > **⚠ Manifest drift note (cycle 1.5 follow-up — issue [#20](https://github.com/Jo-Jo98/ciguard/issues/20)):** the current `deploy/app/manifest.yml` lists `actions: read` for "Read workflow YAML on GitHub Actions repos." The v0.11.0 stub-scan path doesn't actually use this — workflow files come along in the tarball clone. Pending the manifest patch from issue #20, you can either accept the extra read scope (does no harm) or hand-edit the manifest before pasting.
-
 2. Three secrets from the App registration page:
    - **App ID** (public, 6–7 digits)
    - **Webhook secret** (your choice — `openssl rand -hex 32` is the recommended generator)
@@ -120,6 +118,37 @@ server {
 ```
 
 Optional: lock the public-facing webhook port to GitHub's published hook IP ranges (`https://api.github.com/meta` → `.hooks`). The Cycle 1.5 lab did this at the cloud-provider firewall layer — see `Project ciguard/pentest-lab/main.tf` for a Terraform reference. It's belt-and-braces; the HMAC verification is the load-bearing control.
+
+### Optional: strict-OWS rejection at the proxy (cycle 1.5 F-9.1.1)
+
+Cycle 1.5 finding F-9.1.1 (issue [#23](https://github.com/Jo-Jo98/ciguard/issues/23)) is informational: leading ASCII SPACE / TAB in the `X-Hub-Signature-256` header value is silently accepted by ciguard because Uvicorn (and h11 underneath) strips OWS from header values per RFC 7230 Section 3.2.4 *before* the ASGI handler ever sees them. The HMAC over the request body is unaffected — the attacker cannot forge a message they could not also sign cleanly — but a WAF / IDS rule that fingerprints signed traffic via bytewise `startswith("sha256=")` would *miss* the OWS-prefixed variant while ciguard accepts it.
+
+ciguard ships a defence-in-depth `value != value.strip()` check in `webhook.py::_verify_signature`. Under canonical Uvicorn-on-h11 that check is a no-op (the OWS is gone before it runs); it becomes load-bearing if you swap ASGI server (Hypercorn, Daphne) or front the App with a proxy that doesn't strip. Operators who want WAF-aligned strict parsing in the canonical Uvicorn deploy should reject at the proxy:
+
+```nginx
+    location = /webhook {
+        # ... existing directives above ...
+
+        # Reject any X-Hub-Signature-256 header that carries leading
+        # whitespace before nginx normalises it. Cycle 1.5 F-9.1.1 /
+        # issue #23. Belt-and-braces; ciguard's HMAC verification is
+        # the load-bearing control.
+        if ($http_x_hub_signature_256 ~ "^[ \t]") { return 400; }
+    }
+```
+
+Apache equivalent:
+
+```apache
+    <Location "/webhook">
+        # Cycle 1.5 F-9.1.1 / issue #23
+        SetEnvIfNoCase X-Hub-Signature-256 "^[ \t]" reject_ows
+        Require all granted
+        Require not env reject_ows
+    </Location>
+```
+
+This is **opt-in hardening, not required for security**. Skip it if you don't run a WAF rule that depends on bytewise `sha256=` detection.
 
 ## 6. systemd unit (recommended for bare-metal / VM)
 

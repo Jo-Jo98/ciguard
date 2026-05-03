@@ -141,11 +141,32 @@ def _walk(node: Any, level: str) -> Any:
 
 
 def _enforce_size_cap(payload: Any, level: str) -> Any:
-    """If the JSON-serialised payload exceeds the cap for `level`, truncate
+    """If the JSON-serialised payload exceeds the cap for `level`, clip the
     list-shaped sub-payloads (`findings`, `suppressed`, `new`, `resolved`,
-    `rules`) and add a `truncated` flag. We chose truncation over total
+    `rules`) to a small fixed slice and add `truncated: True` plus a
+    human-readable `truncation_reason`. We chose truncation over total
     refusal because a truncated response is still actionable; a 413-equiv
-    error blocks the workflow entirely."""
+    error blocks the workflow entirely.
+
+    Behavioural delta consumers should know about: when the cap fires, each
+    list-shaped sub-payload is **clipped to a fixed 25-element slice**
+    rather than packed-to-just-under-cap. A reader expecting "almost
+    everything minus a few entries" will instead receive a small marker
+    sample. This is intentional — packing-to-fit gives LLM clients a
+    partial dataset that LOOKS complete (encouraging retries against an
+    arbitrarily-trimmed slice), whereas the fixed-25 slice plus the
+    `truncated` flag forces consumers to detect "this is not the full
+    set" deterministically and either lower the redact level or rerun
+    against a narrower scan.
+
+    Caps (per `_SIZE_CAPS_BYTES`):
+      - `full`:    256 KB  (after fingerprinting + path abbreviation)
+      - `partial`: 1 MB    (evidence preserved; paths abbreviated)
+      - `raw`:     10 MB   (passthrough — safety floor only)
+
+    Empirical example (Cycle 1.5 row 10.6, 2026-05-03): 1.6 MB input at
+    `partial` collapses to ~27 KB out, not ~1 MB out. Cycle 1.5 row 10.6
+    documents the full input/output table. See issue #21 for context."""
     cap = _SIZE_CAPS_BYTES.get(level, _SIZE_CAPS_BYTES[LEVEL_FULL])
     encoded = json.dumps(payload, default=str)
     if len(encoded) <= cap:

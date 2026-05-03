@@ -38,6 +38,7 @@ import hashlib
 import json
 import logging
 import os
+import stat
 import time
 import urllib.error
 import urllib.request
@@ -107,18 +108,20 @@ def _load_private_key() -> bytes:
 
     path = os.environ.get(PRIVATE_KEY_PATH_ENV)
     if path and path.strip():
+        path_str = path.strip()
+        # Strip CR/LF defensively — env values are operator-controlled and
+        # therefore trusted, but a basename can still carry stray newlines
+        # if the operator's env injection has them. Defeats CodeQL's
+        # py/log-injection heuristic and any downstream log-parser confusion.
+        leaf = os.path.basename(path_str).replace("\r", "?").replace("\n", "?")
+        _warn_if_world_or_group_readable(path_str, leaf)
         try:
-            with open(path.strip(), "rb") as f:
+            with open(path_str, "rb") as f:
                 key_bytes = f.read()
         except OSError as exc:
             raise RuntimeError(
                 f"failed to read {PRIVATE_KEY_PATH_ENV}: {exc.strerror}"
             ) from exc
-        # Strip CR/LF defensively — env values are operator-controlled and
-        # therefore trusted, but a basename can still carry stray newlines
-        # if the operator's env injection has them. Defeats CodeQL's
-        # py/log-injection heuristic and any downstream log-parser confusion.
-        leaf = os.path.basename(path).replace("\r", "?").replace("\n", "?")
         _log_key_loaded(source=f"path:{leaf}", key_bytes=key_bytes)
         return key_bytes
 
@@ -126,6 +129,34 @@ def _load_private_key() -> bytes:
         f"neither {PRIVATE_KEY_ENV} nor {PRIVATE_KEY_PATH_ENV} is set — "
         "App private key is required to mint JWTs."
     )
+
+
+def _warn_if_world_or_group_readable(path: str, leaf: str) -> None:
+    """Defence-in-depth: warn when the .pem file is group/world-accessible.
+
+    The operator's filesystem permissions are the primary control — ciguard
+    isn't responsible for protecting keys it didn't write. But operators
+    routinely deploy from CI without realising what mode the secret-injector
+    landed; a startup-time warning surfaces the gap before the key leaks.
+
+    Warns, does NOT raise — dev workflows often run with whatever mode the
+    download set (commonly 0644). Cycle 1.5 finding A1 (issue #22).
+    """
+    try:
+        mode = os.stat(path).st_mode
+    except OSError:
+        # File-not-found / perm-denied is reported by the open() call below
+        # with the right error wording; don't pre-empt that.
+        return
+    if not stat.S_ISREG(mode):
+        return
+    overshare = mode & (stat.S_IRWXG | stat.S_IRWXO)
+    if overshare:
+        logger.warning(
+            "App private key at %s has group/world-accessible mode %o — "
+            "tighten with `chmod 600 %s` for production deployments",
+            leaf, stat.S_IMODE(mode), leaf,
+        )
 
 
 def _log_key_loaded(*, source: str, key_bytes: bytes) -> None:

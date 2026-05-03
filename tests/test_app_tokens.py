@@ -130,6 +130,106 @@ def test_private_key_path_form_works(
     assert decoded["iss"] == "12345"
 
 
+# ---- A1 / issue #22 — defence-in-depth file-mode warning -------------------
+
+
+def test_pem_with_world_readable_mode_emits_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    rsa_key_pair: tuple[bytes, bytes],
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """0644 .pem: load succeeds (don't break dev workflows) but a warning
+    fires telling the operator to chmod 600. Cycle 1.5 finding A1."""
+    private_pem, _ = rsa_key_pair
+    keyfile = tmp_path / "app.pem"
+    keyfile.write_bytes(private_pem)
+    keyfile.chmod(0o644)
+
+    monkeypatch.setenv(tokens.APP_ID_ENV, "12345")
+    monkeypatch.delenv(tokens.PRIVATE_KEY_ENV, raising=False)
+    monkeypatch.setenv(tokens.PRIVATE_KEY_PATH_ENV, str(keyfile))
+
+    with caplog.at_level(logging.WARNING, logger="ciguard.app.tokens"):
+        loaded = tokens._load_private_key()
+
+    assert loaded == private_pem  # load still succeeds — warn, don't raise
+    text = "\n".join(r.message for r in caplog.records)
+    assert "group/world-accessible" in text
+    assert "chmod 600" in text
+
+
+def test_pem_with_group_readable_mode_emits_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    rsa_key_pair: tuple[bytes, bytes],
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """0640 .pem (group-readable, world-not): warn — multi-user host risk."""
+    private_pem, _ = rsa_key_pair
+    keyfile = tmp_path / "app.pem"
+    keyfile.write_bytes(private_pem)
+    keyfile.chmod(0o640)
+
+    monkeypatch.setenv(tokens.APP_ID_ENV, "12345")
+    monkeypatch.delenv(tokens.PRIVATE_KEY_ENV, raising=False)
+    monkeypatch.setenv(tokens.PRIVATE_KEY_PATH_ENV, str(keyfile))
+
+    with caplog.at_level(logging.WARNING, logger="ciguard.app.tokens"):
+        tokens._load_private_key()
+
+    text = "\n".join(r.message for r in caplog.records)
+    assert "group/world-accessible" in text
+
+
+def test_pem_with_owner_only_mode_does_not_warn(
+    monkeypatch: pytest.MonkeyPatch,
+    rsa_key_pair: tuple[bytes, bytes],
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """0600 .pem: clean load, no warning — the production-correct mode."""
+    private_pem, _ = rsa_key_pair
+    keyfile = tmp_path / "app.pem"
+    keyfile.write_bytes(private_pem)
+    keyfile.chmod(0o600)
+
+    monkeypatch.setenv(tokens.APP_ID_ENV, "12345")
+    monkeypatch.delenv(tokens.PRIVATE_KEY_ENV, raising=False)
+    monkeypatch.setenv(tokens.PRIVATE_KEY_PATH_ENV, str(keyfile))
+
+    with caplog.at_level(logging.WARNING, logger="ciguard.app.tokens"):
+        tokens._load_private_key()
+
+    text = "\n".join(r.message for r in caplog.records)
+    assert "group/world-accessible" not in text
+
+
+def test_pem_warning_does_not_log_full_path(
+    monkeypatch: pytest.MonkeyPatch,
+    rsa_key_pair: tuple[bytes, bytes],
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The warning must use the basename only — full paths leak deployment
+    layout into logs (CWE-209-ish concern + log-injection vector via path)."""
+    private_pem, _ = rsa_key_pair
+    keyfile = tmp_path / "app.pem"
+    keyfile.write_bytes(private_pem)
+    keyfile.chmod(0o644)
+
+    monkeypatch.setenv(tokens.APP_ID_ENV, "12345")
+    monkeypatch.delenv(tokens.PRIVATE_KEY_ENV, raising=False)
+    monkeypatch.setenv(tokens.PRIVATE_KEY_PATH_ENV, str(keyfile))
+
+    with caplog.at_level(logging.WARNING, logger="ciguard.app.tokens"):
+        tokens._load_private_key()
+
+    text = "\n".join(r.message for r in caplog.records)
+    assert str(tmp_path) not in text
+    assert "app.pem" in text  # basename is fine
+
+
 # ---- Sensitive-data hygiene (THREAT_MODEL row "private key at rest") -------
 
 
