@@ -18,10 +18,14 @@
 # landing page can embed them via <iframe>. Same-origin only;
 # external sites still cannot frame these. Cycle 1.5 Layer-1
 # hardening preserved on every other path.
+#
+# Cloudflare _headers rules are additive across overlapping path
+# patterns. The leading `!` syntax removes the inherited header from
+# the broader `/*` rule, so we can re-add a less-restrictive value
+# without browsers seeing two conflicting CSPs (which would intersect
+# to the strictest = frame-ancestors 'none' = iframe blocked).
 /demos/*
+  ! X-Frame-Options
+  ! Content-Security-Policy
   X-Frame-Options: SAMEORIGIN
-  X-Content-Type-Options: nosniff
-  Referrer-Policy: strict-origin-when-cross-origin
-  Permissions-Policy: interest-cohort=(), browsing-topics=()
-  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
   Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'
