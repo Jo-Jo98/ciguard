@@ -98,6 +98,7 @@ def scan_repo(
     fail_on: Optional[str] = None,
     no_ignore_file: bool = False,
     follow_symlinks: bool = False,
+    include_findings: bool = False,
 ) -> Dict[str, Any]:
     """Discover and scan every pipeline file under `repo_path`.
 
@@ -113,6 +114,21 @@ def scan_repo(
                              or {error: ...} on parser failure)
 
     `fail_on` accepts None | "Critical" | "High" | "Medium" | "Low" | "Info".
+
+    When `include_findings=True`, additional fields are added:
+      - findings:           flat list across all files; each entry is a
+                            Finding `model_dump()` extended with the
+                            relative file path. Used by callers that need
+                            individual finding objects (the App's PR-comment
+                            renderer, baseline-delta diffing).
+      - risk_score:         the LOWEST per-file overall score (min — the
+                            worst pipeline gates the repo's posture).
+                            None if `files_scanned == 0`.
+      - grade:              the grade attached to the worst-score file.
+                            None if `files_scanned == 0`.
+
+    The default (`include_findings=False`) preserves the v0.9.x dict shape
+    that `ciguard scan-repo` CLI and the MCP `scan_repo` tool depend on.
     """
     repo_path = Path(repo_path).expanduser()
     if not repo_path.exists():
@@ -124,8 +140,11 @@ def scan_repo(
     files: List[Dict[str, Any]] = []
     by_severity: Dict[str, int] = {s.value: 0 for s in Severity}
     total_findings = 0
+    all_findings: List[Dict[str, Any]] = []
+    worst: Optional[tuple[float, str]] = None  # (score, grade) of lowest-scoring file
 
     for df in discovered:
+        rel_path = str(df.path.relative_to(repo_path))
         try:
             report = scan_one(
                 df.path,
@@ -135,7 +154,7 @@ def scan_repo(
             )
         except Exception as exc:
             files.append({
-                "path": str(df.path.relative_to(repo_path)),
+                "path": rel_path,
                 "platform": df.platform,
                 "error": str(exc),
             })
@@ -144,15 +163,27 @@ def scan_repo(
             sev = f.severity.value if hasattr(f.severity, "value") else str(f.severity)
             by_severity[sev] = by_severity.get(sev, 0) + 1
             total_findings += 1
-        files.append({
-            "path": str(df.path.relative_to(repo_path)),
+            if include_findings:
+                f_dict = f.model_dump(mode="json")
+                f_dict["file"] = rel_path
+                all_findings.append(f_dict)
+        file_entry: Dict[str, Any] = {
+            "path": rel_path,
             "platform": df.platform,
             "score": report.risk_score.overall,
             "grade": report.risk_score.grade,
             "findings_total": len(report.findings),
             "findings_by_severity": dict(report.summary["by_severity"]),
             "suppressed": len(report.suppressed),
-        })
+        }
+        if include_findings:
+            file_entry["findings"] = [
+                f.model_dump(mode="json") for f in report.findings
+            ]
+        files.append(file_entry)
+        score = report.risk_score.overall
+        if worst is None or score < worst[0]:
+            worst = (score, report.risk_score.grade)
 
     fails_threshold = False
     if fail_on and fail_on in SEVERITY_ORDER:
@@ -162,7 +193,7 @@ def scan_repo(
                 fails_threshold = True
                 break
 
-    return {
+    result: Dict[str, Any] = {
         "repo_path": str(repo_path),
         "files_scanned": len(files),
         "total_findings": total_findings,
@@ -171,3 +202,8 @@ def scan_repo(
         "fails_threshold": fails_threshold,
         "files": files,
     }
+    if include_findings:
+        result["findings"] = all_findings
+        result["risk_score"] = worst[0] if worst is not None else None
+        result["grade"] = worst[1] if worst is not None else None
+    return result
