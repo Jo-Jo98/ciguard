@@ -10,14 +10,17 @@ data to flag:
     SCA-EOL-003  Image / runtime is approaching EOL                (graduated, v0.6.1)
     SCA-PIN-001  Image is tag-pinned but not digest-pinned         (Low)
     SCA-PIN-002  Image uses a mutable tag                          (High — Slice 14c)
+    SCA-PIN-003  Cross-pipeline image drift                        (Medium — v0.11.2)
     SCA-PIN-004  Helm/Kubectl pulls non-versioned chart or image   (Medium — Slice 14c)
     SCA-EOS-001  Image / runtime past end-of-active-support        (Low — v0.6.1)
     SCA-CVE-001  GHA action / reusable workflow has known CVE      (varies — v0.6.1)
 
-SCA-PIN-003 (cross-pipeline drift) is described in the audit-scope spec but
-deferred: it requires aggregating image references across multiple pipeline
-files in one scan, which lives in `repo_scan.py` rather than the
-per-pipeline rule contract. Will land alongside `scan-repo` plumbing.
+SCA-PIN-003 (cross-pipeline drift) lives in `analyzer/sca/cross_pipeline.py`
+rather than this per-file module — it requires aggregation across multiple
+pipeline files in one scan. Wired from `repo_scan.scan_repo()` after the
+per-file loop completes; appears on the result's `cross_pipeline_findings`
+field, with severity counts rolled into `total_findings` + `by_severity`
+so `--fail-on Medium` gates on drift exactly like in-file findings.
 
 EOL/EOS/PIN rules run for every platform (GitLab CI, GitHub Actions, Jenkins)
 since each can reference container images. The image extraction layer

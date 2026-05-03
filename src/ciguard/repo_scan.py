@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .analyzer.engine import AnalysisEngine
+from .analyzer.sca.cross_pipeline import detect_drift
+from .analyzer.sca.image_extractor import ImageReference, extract_images
 from .discovery import discover_pipeline_files
 from .ignore import (
     apply_ignores,
@@ -51,12 +53,17 @@ def scan_one(
     offline: bool = False,
     ignore_file: Optional[Path] = None,
     no_ignore: bool = False,
+    return_images: bool = False,
 ):
     """Scan a single pipeline file and return the full Report.
 
     Honours `.ciguardignore` discovery + per-file overrides identically
     to `cmd_scan` in `main.py`. Lifted out of the MCP server module so
     both MCP and the CLI scan-repo path share a single implementation.
+
+    When `return_images=True`, returns `(report, [ImageReference, ...])`
+    instead of bare report — used by `scan_repo()` for SCA-PIN-003
+    cross-pipeline drift detection without having to re-parse the file.
     """
     plat = _detect_platform(path, platform)
     if plat == "github-actions":
@@ -88,6 +95,8 @@ def scan_one(
                 report.ignore_file_path = str(ig_path)
                 report.summary = engine._build_summary(report.findings)
                 report.risk_score = engine._calculate_risk(report.findings)
+    if return_images:
+        return report, extract_images(target)
     return report
 
 
@@ -112,6 +121,12 @@ def scan_repo(
       - files:               per-file list (path, platform, score, grade,
                              findings_total, findings_by_severity, suppressed,
                              or {error: ...} on parser failure)
+      - cross_pipeline_findings: SCA-PIN-003 drift findings — one entry
+                             per image name referenced with different
+                             tag/digest combinations across >1 file.
+                             Empty list when no drift. Counts ARE rolled
+                             into total_findings + by_severity so
+                             --fail-on Medium gates on them.
 
     `fail_on` accepts None | "Critical" | "High" | "Medium" | "Low" | "Info".
 
@@ -142,16 +157,23 @@ def scan_repo(
     total_findings = 0
     all_findings: List[Dict[str, Any]] = []
     worst: Optional[tuple[float, str]] = None  # (score, grade) of lowest-scoring file
+    # SCA-PIN-003 collects every image reference paired with its file so
+    # cross-pipeline drift can be detected after the per-file loop.
+    file_image_pairs: List[tuple[str, ImageReference]] = []
 
     for df in discovered:
         rel_path = str(df.path.relative_to(repo_path))
         try:
-            report = scan_one(
+            scan_result = scan_one(
                 df.path,
                 platform=df.platform,
                 offline=offline,
                 no_ignore=no_ignore_file,
+                return_images=True,
             )
+            report, images = scan_result
+            for img in images:
+                file_image_pairs.append((rel_path, img))
         except Exception as exc:
             files.append({
                 "path": rel_path,
@@ -185,6 +207,18 @@ def scan_repo(
         if worst is None or score < worst[0]:
             worst = (score, report.risk_score.grade)
 
+    # SCA-PIN-003 — cross-pipeline drift. Runs against every image
+    # reference seen across every successfully-parsed pipeline file.
+    # Emits a Medium-severity finding per drifting image name; counts
+    # roll into total_findings + by_severity so --fail-on Medium gates
+    # on them just like in-file findings would.
+    drift_findings = detect_drift(file_image_pairs)
+    cross_pipeline_findings = [d.to_dict() for d in drift_findings]
+    for cf in cross_pipeline_findings:
+        sev = cf["severity"]
+        by_severity[sev] = by_severity.get(sev, 0) + 1
+        total_findings += 1
+
     fails_threshold = False
     if fail_on and fail_on in SEVERITY_ORDER:
         cutoff = SEVERITY_ORDER.index(fail_on)
@@ -201,6 +235,7 @@ def scan_repo(
         "fail_on": fail_on,
         "fails_threshold": fails_threshold,
         "files": files,
+        "cross_pipeline_findings": cross_pipeline_findings,
     }
     if include_findings:
         result["findings"] = all_findings

@@ -689,6 +689,113 @@ def test_no_unescaped_close_script_inside_inline_scripts() -> None:
 
 
 # ===========================================================================
+# Pipeline-globals banner — closes the Slice 14a residual gap
+# ===========================================================================
+#
+# Pipeline-level (orphan) findings are those whose `location` does not
+# resolve to a known job (global.variables, pipeline.image, include).
+# Slice 14a closeout flagged that they appeared in the side-panel but
+# had no visual home in the diagram. The banner above the DAG is the
+# fix; this section pins the data shape + render contract.
+
+
+def _orphan_finding(rule_id: str, severity: Severity, location: str) -> Finding:
+    """A finding whose location does NOT match any job — pipeline-level."""
+    return Finding(
+        id=f"f-{rule_id}-{location}",
+        rule_id=rule_id,
+        name=f"Pipeline-level: {rule_id}",
+        description="orphan finding",
+        severity=severity,
+        category=Category.SUPPLY_CHAIN,
+        location=location,  # global.*, pipeline.*, include — no job match
+        evidence="evidence",
+        remediation="fix it",
+        compliance=ComplianceMapping(),
+    )
+
+
+def _extract_data_blob(html: str) -> dict:
+    """Pull the JSON blob out of the embedded <script id='ciguard-data'>."""
+    m = re.search(
+        r'<script id="ciguard-data" type="application/json">(.+?)</script>',
+        html, re.DOTALL,
+    )
+    assert m, "could not locate ciguard-data blob"
+    return json.loads(m.group(1).replace("<\\/", "</"))
+
+
+def test_pipeline_globals_present_in_data_blob_when_orphans_exist() -> None:
+    findings = [
+        _orphan_finding("RULE-A", Severity.HIGH, "global.variables"),
+        _orphan_finding("RULE-B", Severity.MEDIUM, "pipeline.image"),
+        _orphan_finding("RULE-C", Severity.LOW, "global.include"),
+    ]
+    out = html_interactive.render(
+        _basic_report(jobs=[Job(name="build")], findings=findings),
+    )
+    blob = _extract_data_blob(out)
+    pg = blob["pipeline_globals"]
+    assert pg["count"] == 3
+    assert pg["by_severity"] == {"High": 1, "Medium": 1, "Low": 1}
+    assert len(pg["fingerprints"]) == 3
+
+
+def test_pipeline_globals_zero_when_all_findings_attach_to_jobs() -> None:
+    findings = [_finding("R", Severity.HIGH, "build")]  # owned by `build`
+    out = html_interactive.render(
+        _basic_report(jobs=[Job(name="build")], findings=findings),
+    )
+    blob = _extract_data_blob(out)
+    assert blob["pipeline_globals"]["count"] == 0
+    assert blob["pipeline_globals"]["by_severity"] == {}
+
+
+def test_globals_banner_rendered_when_orphans_present() -> None:
+    findings = [
+        _orphan_finding("RULE-A", Severity.HIGH, "global.variables"),
+        _orphan_finding("RULE-B", Severity.MEDIUM, "pipeline.image"),
+    ]
+    out = html_interactive.render(
+        _basic_report(jobs=[Job(name="build")], findings=findings),
+    )
+    assert 'id="globals-banner"' in out
+    assert 'Pipeline-level finding' in out  # singular OR plural
+    assert "2 not attached to any job" in out
+    assert 'class="globals-chip High"' in out
+    assert 'class="globals-chip Medium"' in out
+
+
+def test_globals_banner_suppressed_when_no_orphans() -> None:
+    findings = [_finding("R", Severity.HIGH, "build")]
+    out = html_interactive.render(
+        _basic_report(jobs=[Job(name="build")], findings=findings),
+    )
+    assert 'id="globals-banner"' not in out
+    assert 'id="globals-show"' not in out
+
+
+def test_globals_banner_singular_label_for_one_finding() -> None:
+    findings = [_orphan_finding("RULE-A", Severity.LOW, "global")]
+    out = html_interactive.render(
+        _basic_report(jobs=[Job(name="build")], findings=findings),
+    )
+    assert "Pipeline-level finding</strong>" in out  # no trailing 's'
+    assert "1 not attached to any job" in out
+
+
+def test_pipeline_level_filter_button_emitted() -> None:
+    """The new origin filter must ship in the panel-filter row alongside
+    the existing severity buttons. JS toggles it independently."""
+    out = html_interactive.render(
+        _basic_report(jobs=[Job(name="build")],
+                      findings=[_orphan_finding("R", Severity.HIGH, "global.variables")]),
+    )
+    assert 'id="filter-globals"' in out
+    assert 'data-origin="pipeline"' in out
+
+
+# ===========================================================================
 # write_report file-system entry point
 # ===========================================================================
 

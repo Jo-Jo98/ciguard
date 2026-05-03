@@ -316,6 +316,20 @@ def _to_visual_data(report: Report) -> Dict[str, Any]:
     for f in report.findings:
         by_severity_count[f.severity.value] += 1
 
+    # Pipeline-level (orphan) findings — those whose `location` does not
+    # resolve to a known job (global.*, pipeline.*, include, top-level).
+    # The side-panel listing already shows these, but Slice 14a's closeout
+    # noted they had no visual home in the diagram itself. The
+    # `pipeline_globals` aggregate drives the banner that renders above
+    # the DAG when count > 0.
+    orphan_findings = [
+        f for f in report.findings
+        if _owning_job(f.location, known_job_names) is None
+    ]
+    orphan_sev_counts: Dict[str, int] = defaultdict(int)
+    for f in orphan_findings:
+        orphan_sev_counts[f.severity.value] += 1
+
     # Pinning-discipline aggregate across every job that declares an image.
     # Slice 14c — surfaced as a sidebar strip so the auditor can read the
     # repo's pin posture at a glance, not only by inspecting individual node
@@ -355,6 +369,11 @@ def _to_visual_data(report: Report) -> Dict[str, Any]:
                 "tag": pin_counts.get("tag", 0),
                 "mutable": pin_counts.get("mutable", 0),
             },
+        },
+        "pipeline_globals": {
+            "count": len(orphan_findings),
+            "by_severity": dict(orphan_sev_counts),
+            "fingerprints": [f.fingerprint for f in orphan_findings],
         },
         "jobs": jobs_data,
         "edges": edges,
@@ -635,6 +654,51 @@ main { display: flex; flex: 1; min-height: 0; }
 }
 .filter-btn:hover { color: var(--fg); background: var(--bg-card-hover); }
 .filter-btn.active { color: var(--fg); background: var(--bg-card); border-color: var(--border-strong); }
+
+.globals-banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 24px;
+  margin: 0;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.globals-banner .globals-text { display: flex; flex-direction: column; min-width: 0; }
+.globals-banner .globals-text strong { color: var(--fg); font-size: 13px; }
+.globals-banner .globals-sub { color: var(--fg-dim); font-size: 11px; margin-top: 2px; }
+.globals-banner .globals-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.globals-banner .globals-chip {
+  font-size: 10px; font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 999px;
+  letter-spacing: 0.04em;
+  color: #0a0a0a;
+}
+.globals-banner .globals-chip.Critical { background: var(--crit); }
+.globals-banner .globals-chip.High     { background: var(--high); }
+.globals-banner .globals-chip.Medium   { background: var(--med); }
+.globals-banner .globals-chip.Low      { background: var(--low); }
+.globals-banner .globals-chip.Info     { background: var(--info); }
+.globals-banner .globals-show {
+  margin-left: auto;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 5px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--fg);
+  cursor: pointer;
+  transition: background 120ms;
+}
+.globals-banner .globals-show:hover { background: var(--bg-card-hover); }
+.globals-banner.dimmed { opacity: 0.55; }
+.filter-btn[data-origin="pipeline"] { color: var(--fg); }
+.filter-btn[data-origin="pipeline"].active { background: var(--accent); color: #0a0a0a; border-color: var(--accent); }
 
 .findings-list {
   overflow: auto;
@@ -1220,6 +1284,10 @@ _VIEWER_JS = r"""
   let activeSeverity = 'all';
   let activeJob = null;
   let searchQuery = '';
+  // 'all' | 'pipeline' — when 'pipeline', filter to orphan findings
+  // (those without an owning_job). Set by the globals-banner Show
+  // button + the Pipeline-level filter pill.
+  let activeOrigin = 'all';
 
   function setView(view) {
     if (view === 'detail') {
@@ -1241,6 +1309,7 @@ _VIEWER_JS = r"""
     findingsList.html('');
     const items = data.findings.filter(f => {
       if (activeSeverity !== 'all' && f.severity !== activeSeverity) return false;
+      if (activeOrigin === 'pipeline' && f.owning_job !== null) return false;
       if (!matchSearch(f, searchQuery)) return false;
       return true;
     });
@@ -1375,15 +1444,40 @@ _VIEWER_JS = r"""
   // Back button
   document.getElementById('back-to-findings').addEventListener('click', deselectJob);
 
-  // Severity filter buttons
-  document.querySelectorAll('.filter-btn').forEach(btn => {
+  // Severity / origin filter buttons. Severity buttons are mutually
+  // exclusive within their group; the Pipeline-level button toggles
+  // the orphan-only origin filter independently and composes with
+  // any severity selection.
+  document.querySelectorAll('.filter-btn[data-sev]').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.filter-btn[data-sev]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       activeSeverity = btn.dataset.sev;
       renderFindings();
     });
   });
+  const globalsFilterBtn = document.getElementById('filter-globals');
+  if (globalsFilterBtn) {
+    globalsFilterBtn.addEventListener('click', () => {
+      activeOrigin = (activeOrigin === 'pipeline') ? 'all' : 'pipeline';
+      globalsFilterBtn.classList.toggle('active', activeOrigin === 'pipeline');
+      const banner = document.getElementById('globals-banner');
+      if (banner) banner.classList.toggle('dimmed', activeOrigin === 'pipeline');
+      renderFindings();
+    });
+  }
+  // Globals banner "Show in panel" — same toggle, different entry point.
+  const globalsShowBtn = document.getElementById('globals-show');
+  if (globalsShowBtn) {
+    globalsShowBtn.addEventListener('click', () => {
+      if (globalsFilterBtn) globalsFilterBtn.click();
+      // Scroll the side panel into view in case it's off-screen.
+      const sidePanel = document.getElementById('side-panel');
+      if (sidePanel && sidePanel.scrollIntoView) {
+        sidePanel.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+      }
+    });
+  }
 
   // Text-search input
   document.getElementById('findings-search').addEventListener('input', (e) => {
@@ -1507,6 +1601,7 @@ _VIEWER_JS = r"""
     }
     const items = pool.filter(f => {
       if (activeSeverity !== 'all' && f.severity !== activeSeverity) return false;
+      if (activeOrigin === 'pipeline' && f.owning_job !== null) return false;
       if (!matchSearch(f, searchQuery)) return false;
       return true;
     });
@@ -1629,6 +1724,40 @@ def render(report: Report) -> str:
     grade = _html_escape(score["grade"])
     total_findings = sum(counts.values())
 
+    # Pipeline-globals banner — surfaces orphan findings (pipeline.image,
+    # global.variables, include directives) above the DAG so they have a
+    # visual home rather than only appearing in the side-panel list.
+    # Suppressed entirely when count == 0 — clean pipelines stay clean.
+    globals_data = data.get("pipeline_globals", {})
+    globals_count = globals_data.get("count", 0)
+    if globals_count:
+        globals_chips: List[str] = []
+        for sev_label in ("Critical", "High", "Medium", "Low", "Info"):
+            n = globals_data.get("by_severity", {}).get(sev_label, 0)
+            if n:
+                globals_chips.append(
+                    f'<span class="globals-chip {sev_label}">{n} {sev_label}</span>'
+                )
+        plural = "s" if globals_count != 1 else ""
+        globals_banner = (
+            '<div class="globals-banner" id="globals-banner" '
+            'role="region" aria-label="Pipeline-level findings">'
+            '<div class="globals-text">'
+            '<strong>Pipeline-level finding'
+            f'{plural}</strong>'
+            f'<span class="globals-sub">{globals_count} not attached to any job — '
+            'pipeline-wide config (variables, includes, default image, runner). '
+            'Resolves the gap noted in Slice 14a closeout.</span>'
+            '</div>'
+            f'<div class="globals-chips">{"".join(globals_chips)}</div>'
+            '<button class="globals-show" id="globals-show" '
+            f'aria-label="Show {globals_count} pipeline-level finding{plural} '
+            'in side panel">Show in panel →</button>'
+            '</div>'
+        )
+    else:
+        globals_banner = ""
+
     # Inline all assets. Single self-contained file is the design goal.
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -1666,6 +1795,7 @@ def render(report: Report) -> str:
     <span id="diff-meta"></span>
     <button id="diff-clear" aria-label="Clear comparison">clear</button>
   </div>
+  {globals_banner}
   <main>
     <div id="graph-container"></div>
     <aside id="side-panel">
@@ -1684,6 +1814,7 @@ def render(report: Report) -> str:
           <button class="filter-btn" data-sev="Medium">Medium</button>
           <button class="filter-btn" data-sev="Low">Low</button>
           <button class="filter-btn" data-sev="Info">Info</button>
+          <button class="filter-btn" data-origin="pipeline" id="filter-globals">Pipeline-level</button>
         </div>
         <div id="findings-list" class="findings-list"></div>
       </div>

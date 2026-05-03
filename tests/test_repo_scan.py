@@ -81,10 +81,14 @@ class TestScanRepoHelper:
         assert result["files_scanned"] == 3
         platforms = {f["platform"] for f in result["files"]}
         assert platforms == {"gitlab-ci", "github-actions"}
-        # Aggregate counts must add up to per-file counts
+        # Aggregate counts = per-file counts + cross-pipeline drift findings
+        # (SCA-PIN-003, v0.11.2). The mixed-repo fixture references `alpine`
+        # both un-tagged and digest-pinned across two .gitlab-ci.yml files,
+        # which is drift by definition.
         agg_total = result["total_findings"]
         per_file_total = sum(f.get("findings_total", 0) for f in result["files"])
-        assert agg_total == per_file_total
+        cross_pipe_total = len(result["cross_pipeline_findings"])
+        assert agg_total == per_file_total + cross_pipe_total
 
     def test_fail_on_high_breaches_when_high_findings_exist(self, tmp_path):
         _make_mixed_repo(tmp_path)
@@ -124,10 +128,14 @@ class TestScanRepoHelper:
     def test_include_findings_attaches_flat_list_and_aggregate_score(self, tmp_path):
         _make_mixed_repo(tmp_path)
         result = scan_repo(tmp_path, offline=True, include_findings=True)
-        # Flat list across all files
+        # Flat list across all files. Cross-pipeline drift findings (SCA-PIN-003,
+        # v0.11.2) are NOT included in the per-file flat list — they live on a
+        # separate `cross_pipeline_findings` field — but they DO count in
+        # total_findings, so subtract them when comparing.
         assert "findings" in result
         assert isinstance(result["findings"], list)
-        assert len(result["findings"]) == result["total_findings"]
+        cross_pipe_total = len(result["cross_pipeline_findings"])
+        assert len(result["findings"]) == result["total_findings"] - cross_pipe_total
         # Each finding is a dict with the load-bearing fields the App's
         # PR-comment renderer reads (severity, rule_id, location, evidence,
         # message-equivalent name/description).
@@ -161,6 +169,125 @@ class TestScanRepoHelper:
         assert result["findings"] == []
         assert result["risk_score"] is None
         assert result["grade"] is None
+
+
+# ---- SCA-PIN-003 cross-pipeline drift (v0.11.2) ----------------------------
+#
+# Drift fires when the SAME image NAME is referenced with DIFFERENT tag /
+# digest combinations across >1 pipeline file. Severity Medium. Counts
+# roll into total_findings + by_severity so --fail-on Medium gates on
+# drift exactly like in-file findings would.
+
+
+_DRIFT_PYTHON_311 = """stages: [build]
+build:
+  image: python:3.11.4
+  script: ['pytest']
+"""
+
+_DRIFT_PYTHON_312 = """stages: [build]
+build:
+  image: python:3.12
+  script: ['pytest']
+"""
+
+_DRIFT_PYTHON_311_AGAIN = """stages: [build]
+build:
+  image: python:3.11.4
+  script: ['ruff check']
+"""
+
+
+class TestSCAPIN003Drift:
+    def test_drift_fires_when_two_files_pin_same_image_to_different_versions(
+        self, tmp_path
+    ):
+        (tmp_path / ".gitlab-ci.yml").write_text(_DRIFT_PYTHON_311)
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / ".gitlab-ci.yml").write_text(_DRIFT_PYTHON_312)
+
+        result = scan_repo(tmp_path, offline=True)
+        cp = result["cross_pipeline_findings"]
+        assert len(cp) == 1
+        finding = cp[0]
+        assert finding["rule_id"] == "SCA-PIN-003"
+        assert finding["severity"] == "Medium"
+        assert finding["image_name"] == "python"
+        assert len(finding["variants"]) == 2
+        assert len(finding["files_affected"]) == 2
+
+    def test_no_drift_when_all_files_pin_same_version(self, tmp_path):
+        (tmp_path / ".gitlab-ci.yml").write_text(_DRIFT_PYTHON_311)
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / ".gitlab-ci.yml").write_text(_DRIFT_PYTHON_311_AGAIN)
+
+        result = scan_repo(tmp_path, offline=True)
+        assert result["cross_pipeline_findings"] == []
+
+    def test_no_drift_when_two_versions_live_in_one_file_only(self, tmp_path):
+        # Drift is the CROSS-FILE shape. Two variants in a single file is
+        # noise the per-file scan can already handle.
+        (tmp_path / ".gitlab-ci.yml").write_text(
+            _DRIFT_PYTHON_311 + "\nlint:\n  image: python:3.12\n  script: ['true']\n"
+        )
+        result = scan_repo(tmp_path, offline=True)
+        assert result["cross_pipeline_findings"] == []
+
+    def test_drift_severity_counts_into_aggregate(self, tmp_path):
+        (tmp_path / ".gitlab-ci.yml").write_text(_DRIFT_PYTHON_311)
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / ".gitlab-ci.yml").write_text(_DRIFT_PYTHON_312)
+
+        result = scan_repo(tmp_path, offline=True)
+        cross = len(result["cross_pipeline_findings"])
+        per_file = sum(f.get("findings_total", 0) for f in result["files"])
+        assert result["total_findings"] == per_file + cross
+        # Each cross-pipeline finding adds one Medium to by_severity
+        assert result["by_severity"]["Medium"] >= cross
+
+    def test_fail_on_medium_gates_on_drift(self, tmp_path):
+        (tmp_path / ".gitlab-ci.yml").write_text(_DRIFT_PYTHON_311)
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / ".gitlab-ci.yml").write_text(_DRIFT_PYTHON_312)
+
+        result = scan_repo(tmp_path, offline=True, fail_on="Medium")
+        # Drift alone is enough to breach a Medium gate even if no per-file
+        # findings reach Medium severity.
+        assert result["fails_threshold"] is True
+
+    def test_drift_finding_contains_remediation_text(self, tmp_path):
+        (tmp_path / ".gitlab-ci.yml").write_text(_DRIFT_PYTHON_311)
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / ".gitlab-ci.yml").write_text(_DRIFT_PYTHON_312)
+
+        result = scan_repo(tmp_path, offline=True)
+        finding = result["cross_pipeline_findings"][0]
+        assert "remediation" in finding
+        assert "canonical version" in finding["remediation"]
+
+    def test_drift_variants_record_files_per_variant(self, tmp_path):
+        (tmp_path / ".gitlab-ci.yml").write_text(_DRIFT_PYTHON_311)
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / ".gitlab-ci.yml").write_text(_DRIFT_PYTHON_312)
+
+        result = scan_repo(tmp_path, offline=True)
+        finding = result["cross_pipeline_findings"][0]
+        # Each variant carries its own files list — so the dashboard can
+        # render "python:3.11.4 in [a.gitlab-ci.yml]" / "python:3.12 in [sub/b.gitlab-ci.yml]"
+        for v in finding["variants"]:
+            assert "files" in v
+            assert len(v["files"]) >= 1
+            assert v["occurrences"] >= 1
+
+    def test_empty_repo_emits_no_drift(self, tmp_path):
+        result = scan_repo(tmp_path, offline=True)
+        assert result["cross_pipeline_findings"] == []
 
 
 # ---- CLI integration -------------------------------------------------------
