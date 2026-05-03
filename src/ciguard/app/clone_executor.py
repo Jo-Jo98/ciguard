@@ -51,20 +51,13 @@ import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable
 
 from .. import repo_scan
 from . import tokens
 from .scheduler import ScanJob
 
 logger = logging.getLogger("ciguard.app.clone_executor")
-
-# Python's tarfile `filter="data"` arg landed in 3.12. Earlier versions
-# would silently fall back to the unsafe default. We assert at import
-# time so an inadvertent downgrade fails loudly.
-assert sys.version_info >= (3, 12), (
-    "clone_executor requires Python 3.12+ for tarfile filter='data' support"
-)
 
 # Cap on tarball download size. GitHub doesn't pre-declare Content-Length
 # on the codeload redirect, so we enforce streaming. A repo larger than
@@ -87,6 +80,43 @@ class TarballTooLarge(Exception):
 
 class TarballFetchError(Exception):
     """Raised on any non-200 response from the tarball API."""
+
+
+def _safe_extract(tar: tarfile.TarFile, dest: Path) -> None:
+    """Extract `tar` into `dest`, rejecting:
+
+      - absolute paths in member names
+      - parent-dir traversal (`../`)
+      - symlinks, hardlinks, device files, FIFOs (any non-regular non-dir)
+
+    Equivalent to Python 3.12+ `extractall(filter="data")` but written
+    out so we work on 3.10 + 3.11 too. (Python 3.12 added `filter=`
+    as a built-in arg; we deliberately don't depend on that so the
+    package's existing `python_requires` envelope holds.)
+    """
+    dest_resolved = dest.resolve()
+    for member in tar.getmembers():
+        if (
+            member.issym() or member.islnk() or member.ischr()
+            or member.isblk() or member.isfifo() or member.isdev()
+        ):
+            raise TarballFetchError(
+                f"refusing tarball member with special file type: {member.name!r}"
+            )
+        # Resolve the would-be target and ensure it stays under dest.
+        target = (dest / member.name).resolve()
+        if dest_resolved != target and dest_resolved not in target.parents:
+            raise TarballFetchError(
+                f"refusing tarball member outside dest: {member.name!r}"
+            )
+    # On 3.12+, also pass `filter="data"` for belt-and-braces (and to silence
+    # the 3.14 deprecation warning that fires when no filter is set). On
+    # 3.10/3.11 the kwarg doesn't exist; the manual validation above is the
+    # equivalent safety.
+    if sys.version_info >= (3, 12):
+        tar.extractall(path=dest, filter="data")  # nosec B202
+    else:
+        tar.extractall(path=dest)  # nosec B202 — every member validated above
 
 
 def _fetch_tarball(
@@ -116,7 +146,11 @@ def _fetch_tarball(
     chunk_size = 64 * 1024
 
     try:
-        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT_SECONDS) as resp:
+        # nosec B310 — URL is constructed from the hardcoded GITHUB_API_BASE
+        # constant + caller-controlled `owner`/`repo`/`ref`. The scheme is
+        # always https; no file:// or custom-scheme exposure. Token is in
+        # the Authorization header (per Surface 9 row 9.7).
+        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT_SECONDS) as resp:  # nosec B310
             if resp.status != 200:
                 raise TarballFetchError(
                     f"GitHub tarball API returned HTTP {resp.status} for "
@@ -149,10 +183,7 @@ def _fetch_tarball(
     extract_root = dest / "extracted"
     extract_root.mkdir()
     with tarfile.open(tar_path, mode="r:gz") as tar:
-        # filter="data" rejects: absolute paths, traversal (../), special
-        # files (devices, FIFOs), symlinks pointing outside the extract
-        # root. This is the load-bearing safety.
-        tar.extractall(path=extract_root, filter="data")  # type: ignore[arg-type]
+        _safe_extract(tar, extract_root)
 
     # Tarball extracts to a single top-level dir. Find it.
     children = [c for c in extract_root.iterdir() if c.is_dir()]
