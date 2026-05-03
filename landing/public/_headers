@@ -13,3 +13,15 @@
 # Hashed asset filenames are immutable — far-future cache.
 /_assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+# Demo HTML deliverables — same-origin framing allowed so the
+# landing page can embed them via <iframe>. Same-origin only;
+# external sites still cannot frame these. Cycle 1.5 Layer-1
+# hardening preserved on every other path.
+/demos/*
+  X-Frame-Options: SAMEORIGIN
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: interest-cohort=(), browsing-topics=()
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'
