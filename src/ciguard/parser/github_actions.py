@@ -41,6 +41,10 @@ class GitHubActionsParser:
                 raw = yaml.safe_load(fh)
             except yaml.YAMLError as exc:
                 raise ValueError(f"Invalid YAML: {exc}") from exc
+            except RecursionError as exc:
+                raise ValueError(
+                    "Invalid YAML: input nests deeper than the parser can handle"
+                ) from exc
         if not isinstance(raw, dict):
             raise ValueError(f"Expected a YAML mapping, got {type(raw).__name__}")
         return self.parse(raw)
@@ -203,6 +207,10 @@ def parse_file(path: str | Path) -> Union[Workflow, "Pipeline"]:  # noqa: F821
             raw = yaml.safe_load(fh)
         except yaml.YAMLError as exc:
             raise ValueError(f"Invalid YAML: {exc}") from exc
+        except RecursionError as exc:
+            raise ValueError(
+                "Invalid YAML: input nests deeper than the parser can handle"
+            ) from exc
     if not isinstance(raw, dict):
         raise ValueError(f"Expected a YAML mapping, got {type(raw).__name__}")
 

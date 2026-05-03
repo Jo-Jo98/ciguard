@@ -31,6 +31,10 @@ with atheris.instrument_imports():
     from ciguard.parser.jenkinsfile import JenkinsfileParser
 
 # Exceptions expected on bad input. Anything outside this set is a real bug.
+# RecursionError is library behaviour from pyyaml on deeply-nested input
+# (issue #18, 2026-05-03 fuzz finding) — production yaml.safe_load sites now
+# wrap it as ValueError, but the harness's own pre-parse safe_load can still
+# surface it before reaching ciguard code, so we accept it here.
 EXPECTED = (
     ValueError,
     KeyError,
@@ -38,6 +42,7 @@ EXPECTED = (
     AttributeError,
     UnicodeDecodeError,
     UnicodeEncodeError,
+    RecursionError,
 )
 
 _gitlab = GitLabCIParser()

@@ -125,6 +125,10 @@ def load_ignore_file(path: Path) -> IgnoreLoadResult:
             raw = yaml.safe_load(fh)
     except yaml.YAMLError as exc:
         raise ValueError(f"{path}: invalid YAML — {exc}") from exc
+    except RecursionError as exc:
+        raise ValueError(
+            f"{path}: invalid YAML — input nests deeper than the parser can handle"
+        ) from exc
 
     if raw is None:
         return IgnoreLoadResult(path=path, rules=[])

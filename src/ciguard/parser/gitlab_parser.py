@@ -74,6 +74,10 @@ class GitLabCIParser:
                 raw = yaml.load(fh, Loader=_GitLabSafeLoader)  # nosec B506 - _GitLabSafeLoader is a SafeLoader subclass with a single registered constructor for GitLab's `!reference` tag; no arbitrary object instantiation
             except yaml.YAMLError as exc:
                 raise ValueError(f"Invalid YAML: {exc}") from exc
+            except RecursionError as exc:
+                raise ValueError(
+                    "Invalid YAML: input nests deeper than the parser can handle"
+                ) from exc
         if not isinstance(raw, dict):
             raise ValueError(f"Expected a YAML mapping, got {type(raw).__name__}")
         return self.parse(raw)

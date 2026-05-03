@@ -86,6 +86,10 @@ def load(path: Path) -> Topology:
         data = yaml.safe_load(text) or {}
     except yaml.YAMLError as exc:
         raise TopologyLoadError(f"{path}: invalid YAML — {exc}") from exc
+    except RecursionError as exc:
+        raise TopologyLoadError(
+            f"{path}: invalid YAML — input nests deeper than the parser can handle"
+        ) from exc
     if not isinstance(data, dict):
         raise TopologyLoadError(
             f"{path}: top-level must be a mapping, got {type(data).__name__}"
