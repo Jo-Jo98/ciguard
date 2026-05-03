@@ -78,14 +78,24 @@ def _safe_md_inline(value: Optional[str], *, max_len: int = INLINE_MAX_CHARS) ->
     don't fully trust (built-in messages are safe; LLM-enriched ones
     may not be), human-readable severities echoed back from input.
 
-    Strips CR/LF + tab; escapes markdown specials; caps length;
-    HTML-encodes `<` and `>` to defeat raw-HTML injection in markdown.
+    Strips CR/LF + tab + ASCII NUL + remaining C0 control chars; escapes
+    markdown specials; caps length; HTML-encodes `<` and `>` to defeat
+    raw-HTML injection in markdown.
+
+    NUL-byte handling closes Cycle 1.5 finding F-9.6.1 (CWE-158): an
+    attacker-supplied NUL inside an inline value would otherwise traverse
+    the sanitiser unchanged and could truncate downstream consumers
+    (logs, search indices, custom CI tooling) that treat \\x00 as a
+    string terminator while GitHub's PR renderer normalises it on display.
     """
     if value is None:
         return "_(none)_"
     safe = (
         value.replace("\r", " ").replace("\n", " ").replace("\t", " ")
     )
+    # Strip ASCII NUL + all other C0 control chars (\x01-\x1f minus the
+    # CR/LF/tab already turned into spaces). \x7f DEL is also stripped.
+    safe = "".join(ch for ch in safe if ord(ch) >= 0x20 and ord(ch) != 0x7f)
     # HTML-encode angle brackets first (markdown lets raw HTML through).
     safe = safe.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     # Backslash-escape every markdown special so links / emphasis can't
