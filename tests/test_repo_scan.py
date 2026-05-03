@@ -108,6 +108,60 @@ class TestScanRepoHelper:
         # Sanity: SEVERITY_ORDER drives the threshold logic. Lock the order.
         assert SEVERITY_ORDER == ["Critical", "High", "Medium", "Low", "Info"]
 
+    # ---- include_findings contract (v0.11.1 — App scan executor) -----------
+
+    def test_include_findings_default_off_preserves_v0_9_dict_shape(self, tmp_path):
+        # Locks the v0.9.x callers (CLI scan-repo, MCP scan_repo tool) against
+        # accidental shape drift when the App-context fields land.
+        _make_mixed_repo(tmp_path)
+        result = scan_repo(tmp_path, offline=True)
+        assert "findings" not in result
+        assert "risk_score" not in result
+        assert "grade" not in result
+        for file_entry in result["files"]:
+            assert "findings" not in file_entry  # per-file findings list also opt-in
+
+    def test_include_findings_attaches_flat_list_and_aggregate_score(self, tmp_path):
+        _make_mixed_repo(tmp_path)
+        result = scan_repo(tmp_path, offline=True, include_findings=True)
+        # Flat list across all files
+        assert "findings" in result
+        assert isinstance(result["findings"], list)
+        assert len(result["findings"]) == result["total_findings"]
+        # Each finding is a dict with the load-bearing fields the App's
+        # PR-comment renderer reads (severity, rule_id, location, evidence,
+        # message-equivalent name/description).
+        for f in result["findings"]:
+            assert "rule_id" in f
+            assert "severity" in f
+            assert "location" in f
+            assert "evidence" in f
+            assert "file" in f  # added by scan_repo, not present on the model
+        # Per-file findings ALSO attached (the App may want per-file rendering)
+        for file_entry in result["files"]:
+            if "error" in file_entry:
+                continue
+            assert "findings" in file_entry
+            assert len(file_entry["findings"]) == file_entry["findings_total"]
+        # Aggregate risk_score = min over per-file scores (worst pipeline gates the repo)
+        per_file_scores = [
+            f["score"] for f in result["files"] if "error" not in f
+        ]
+        assert result["risk_score"] == min(per_file_scores)
+        # Grade matches the worst-scoring file
+        worst_file = min(
+            (f for f in result["files"] if "error" not in f),
+            key=lambda f: f["score"],
+        )
+        assert result["grade"] == worst_file["grade"]
+
+    def test_include_findings_on_empty_repo_returns_none_score(self, tmp_path):
+        result = scan_repo(tmp_path, offline=True, include_findings=True)
+        assert result["files_scanned"] == 0
+        assert result["findings"] == []
+        assert result["risk_score"] is None
+        assert result["grade"] is None
+
 
 # ---- CLI integration -------------------------------------------------------
 
