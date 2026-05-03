@@ -5,6 +5,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-05-03
+
+**Highlights:** The GitHub App receiver now ships a real scan executor — v0.10.0's stub is gone. On every webhook, the App mints an installation token, fetches the repo tarball at the head SHA from `GET /repos/{o}/{r}/tarball/{ref}`, extracts it under a `tempfile.TemporaryDirectory()` with per-member validation, runs `repo_scan.scan_repo(include_findings=True)` against the extracted tree, and posts the findings back as a Check Run + PR comment. v0.11.1 also closes the only finding from the Cycle 1.5 self-pentest (F-9.6.1, NUL bytes in `_safe_md_inline`), adds a 12-section production-deploy guide (`DEPLOYMENT.md`), and fixes a CodeQL `py/tarslip` advisory by switching `tar.extractall()` to per-member `tar.extract()`. Test count: 962 → 977 (+15).
+
+### Security
+
+- **F-9.6.1 — `_safe_md_inline()` now strips ASCII NUL + remaining C0 control chars.** Surfaced by Cycle 1.5 self-pentest (2026-05-03). The inline PR-comment sanitiser previously stripped CR/LF/tab and HTML-encoded `<>` but let `\x00` through. CWE-158 (Improper Neutralization of Null Byte). CVSS v3.1 3.7 (Low). The block-level sibling `_safe_md_block()` was already safe via its 4-backtick fence wrapping. New regression PoC at `tests/regression/cycle1.5/F-9.6.1-null-byte-inline.py` locks the fix in CI. Disclosure: same-day publishable per `feedback_coordinated_disclosure_window.md` rationale (verified ~zero installs at test time); no GHSA filed.
+- **CodeQL `py/tarslip` (CWE-22) advisory closed** — v0.11.1's clone executor previously called `tar.extractall(path=dest)` after a manual member-validation pass; CodeQL pattern-matches `extractall()` regardless of preceding validation, AND `extractall` operates on the live `members` list which a hostile `tarfile` subclass could re-mutate between validation and extraction. Now validates AND extracts one member at a time via `tar.extract(member, path=dest)` — TOCTOU window closed, CodeQL silenced. On Python 3.12+ also passes `filter="data"` belt-and-braces.
+- **Cycle 1.5 self-pentest closed green.** 21 of 21 in-scope rows Verified across Surface 9 (GitHub App receiver, 13 STRIDE rows) + Surface 10 (MCP redaction, 7 PoC rows) + 4-row Cycle-1 regression retest. All four 2026-04-27 GHSAs remain CLOSED in v0.11.1. Full CREST-style report at `Pentest Reports/2026-05-03-cycle-1.5.md` in the planning vault. Two reportable findings: F-9.6.1 (Low, fixed) + F-9.1.1 (Info, ASCII OWS in signature header — issue [#23](https://github.com/Jo-Jo98/ciguard/issues/23), defence-in-depth observation only, no exploitation chain).
+
+### Added — GitHub App scan executor
+
+- **`clone_and_scan_executor`** in `src/ciguard/app/clone_executor.py` — replaces v0.10.0's `_stub_scan_executor` as the default in `factory.py`. Pipeline: mint installation token → `GET /repos/{o}/{r}/tarball/{ref}` with `Authorization: token <ghs_…>` (token in header, never URL) → extract under `tempfile.TemporaryDirectory()` with per-member safety validation → `repo_scan.scan_repo(include_findings=True)` → translate to PR-comment-renderer shape. Stub kept available for tests via `create_app(scan_executor=...)` injection.
+- **Why tarball, not `git clone`:** no `git` binary in the deploy image (smaller container, fewer CVEs to patch); single HTTP request instead of multi-stage clone+fetch+checkout; tarball auto-derived from the ref so no "did the shallow clone include this SHA?" edge cases; smaller transfer (no `.git/objects`).
+- **Threat-model controls landed:** 200 MB streaming size cap (`TarballTooLarge`) closes Surface 9 row "Webhook handler DoS"; token in `Authorization` header (never URL) closes Surface 9 row "Installation token leakage"; per-member `extract()` after validation closes archive-injection sub-row of "Multi-tenant baseline.json bleed"; HTTP 401 from tarball API triggers `tokens.invalidate_token()` to honour Surface 9 row "Cached installation token used after revocation".
+- **`repo_scan.scan_repo(include_findings=True)`** — new opt-in keyword. Default off preserves v0.9.x dict shape that the CLI scan-repo + MCP scan_repo tool depend on. With it on, the result dict gains `findings` (flat list across all files), per-file `findings`, and aggregate `risk_score` / `grade` (worst per-file score gates the repo).
+
+### Added — `DEPLOYMENT.md`
+
+- **12-section production-deploy guide** at `DEPLOYMENT.md` — operator-facing companion to README. Covers: what you're deploying (single-process, in-memory queue, 200 MB cap), App registration via `deploy/app/manifest.yml`, secret material + file-mode hygiene, dedicated non-root UID (`useradd --system ciguard`), reverse proxy + TLS (full nginx `/webhook` block with `request_buffering off` so raw bytes reach HMAC unmodified), systemd unit with the hardening directives that close Surface 9 row "App private key exposure" (`NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`, `ProtectKernel*`, `MemoryDenyWriteExecute`, `SystemCallFilter=@system-service`, `ReadWritePaths` bound to storage), container layout (`--cap-drop=ALL --security-opt no-new-privileges`, read-only root), storage layout `<root>/<install_id>/<owner>/<repo>/baseline.json` + backup posture, observability (logger map + what to alert on), upgrades + rollback (Sigstore + PEP 740 verification snippets), full env-var contract for all 12 `CIGUARD_*` vars, 11-box pre-flight checklist.
+- README "Running the GitHub App" section bumped from v0.10.0 to v0.11.1; stub-status callout removed; cross-reference to `DEPLOYMENT.md` added.
+
+### Cycle 1.5 follow-up issues filed (no time pressure; ship in next minor)
+
+- **[#20](https://github.com/Jo-Jo98/ciguard/issues/20)** — Drop `Actions: read` from `THREAT_MODEL.md` Surface 9 + `deploy/app/manifest.yml` (the v0.11 stub-and-real scan paths don't use it; tarball clone carries workflow files anyway). Documentation patch.
+- **[#21](https://github.com/Jo-Jo98/ciguard/issues/21)** — Document MCP redaction-layer truncation behaviour (`_enforce_size_cap` collapses to a marker rather than packing-to-fit when the cap fires). Docstring expansion.
+- **[#22](https://github.com/Jo-Jo98/ciguard/issues/22)** — Lint `.pem` file mode in `_load_private_key()` — defence-in-depth (operator's filesystem permissions are the primary control, but `os.stat() & 0o077 == 0` would surface misconfigurations earlier). Hardening.
+- **[#23](https://github.com/Jo-Jo98/ciguard/issues/23)** — Permissive ASCII OWS in `X-Hub-Signature-256` header (F-9.1.1 from the cycle 1.5 report — Info, CVSS 0.0). Library-level OWS-strip per RFC 7230 §3.2.4 means leading SPACE/TAB in the signature value is silently accepted. HMAC over the body is unaffected; defence-in-depth concern only. Address only on a concrete WAF/IDS gap report.
+
+### Engineering hygiene
+
+- **Per-member `tar.extract()`** in `clone_executor` — cleaner than `extractall()` because the validation and extraction happen on the same `member` object reference. No risk of TOCTOU if a hostile `tarfile` subclass remutates `members` between validation pass and extraction.
+- **`assert sys.version_info >= (3, 12)`** removed from `clone_executor` import time — was blocking 3.10/3.11 test runs (the package's declared `python_requires=">=3.10"` envelope). Replaced with manual `_safe_extract` that works on all supported Pythons; 3.12+ still gets `filter="data"` belt-and-braces.
+- **`# nosec B310`** annotation on the single `urllib.request.urlopen` call site, with rationale: URL constructed from the hardcoded `GITHUB_API_BASE` constant + caller-controlled owner/repo/ref; scheme always https; no file:// or custom-scheme exposure.
+- **§ → "Section" sweep** across DEPLOYMENT.md and the Cycle 1.5 vault docs — long-standing user preference (not legalistic). Memory `feedback_documentation_conventions.md` strengthened with the second-time-broke-it warning + reset recipe.
+
 ## [0.11.0] — 2026-05-03
 
 **Highlights:** This release matures ciguard from per-pipeline scanner to org-wide audit deliverable. Slices 14b/14c/15/16/17 add cross-pipeline topology with live-API verification, an org-level dashboard with per-repo D3 drill-downs, MCP redaction + audit-log hardening, and three pin-discipline rules. Slice 10 ships ciguard.dev — a static landing page on Cloudflare Pages with CAA pinning, DMARC/SPF email-spoofing lockdown, 404 page, robots, and sitemap. Atheris weekly fuzz finding #18 (pyyaml RecursionError on deeply-nested input) is fixed. Test count: 743 → 962 (+219).
