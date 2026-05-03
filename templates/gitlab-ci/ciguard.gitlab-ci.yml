@@ -9,7 +9,7 @@
 # repo, exposes the JSON report as a job artifact, and can be wired
 # into the pipeline as a gate stage by changing `allow_failure: true`.
 #
-# Bump the version pin (`ciguard==0.11.0`) when you want to upgrade.
+# Bump the version pin (`ciguard==0.11.1`) when you want to upgrade.
 
 stages:
   - test
@@ -22,7 +22,7 @@ ciguard:
     # bypass network SCA lookups.
     CIGUARD_OFFLINE: "0"
   before_script:
-    - pip install --quiet ciguard==0.11.0
+    - pip install --quiet ciguard==0.11.1
   script:
     - |
       OFFLINE_FLAG=""
