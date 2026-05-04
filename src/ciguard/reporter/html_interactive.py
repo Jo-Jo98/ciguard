@@ -1499,17 +1499,33 @@ _VIEWER_JS = r"""
     }
   });
 
+  // ---- Embed mode: ?embed=1 hides demo-irrelevant UI affordances ----
+  // Used by the ciguard.dev landing page when iframing this HTML, where
+  // the Compare-against-previous-scan flow has no meaningful target +
+  // visitors (rightly) flag the file picker as "what is this asking
+  // me to upload?" Strips the Compare button, its hidden file input,
+  // and the diff banner from the DOM. Diff-mode handlers below are
+  // gated on `!embedMode` so they never wire up -- a determined user
+  // can't trigger the file picker by URL hash trickery.
+  const embedMode = new URLSearchParams(window.location.search).get('embed') === '1';
+  if (embedMode) {
+    ['compare-btn', 'compare-file', 'diff-banner'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
+  }
+
   // ---- Diff mode: load a second ciguard map.html, compute diff ----
   let diffData = null;  // the previous-scan data, or null when not in diff mode
 
-  document.getElementById('compare-btn').addEventListener('click', () => {
+  if (!embedMode) document.getElementById('compare-btn').addEventListener('click', () => {
     if (diffData) {
       clearDiff();
     } else {
       document.getElementById('compare-file').click();
     }
   });
-  document.getElementById('compare-file').addEventListener('change', (e) => {
+  if (!embedMode) document.getElementById('compare-file').addEventListener('change', (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     file.text().then(text => {
@@ -1532,7 +1548,7 @@ _VIEWER_JS = r"""
     // Reset so re-selecting the same file re-fires the change event
     e.target.value = '';
   });
-  document.getElementById('diff-clear').addEventListener('click', clearDiff);
+  if (!embedMode) document.getElementById('diff-clear').addEventListener('click', clearDiff);
 
   function applyDiff(prev) {
     diffData = prev;

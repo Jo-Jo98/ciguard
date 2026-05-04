@@ -119,7 +119,7 @@ import ScreenshotStrip from "../components/ScreenshotStrip.astro";
       </p>
 
       <DemoIframe
-        src="/demos/per-pipeline-bad"
+        src="/demos/per-pipeline-bad?embed=1"
         title="Live ciguard per-pipeline visualiser demo (deliberately-flawed pipeline)"
         caption="Per-pipeline visualiser · scan against a deliberately-flawed GitLab pipeline · showing the v0.11.2 pipeline-globals banner + every interactive surface"
       />
@@ -139,44 +139,89 @@ import ScreenshotStrip from "../components/ScreenshotStrip.astro";
       <div class="demo-stack">
         <article class="demo-section">
           <span class="demo-pair-label">monolith</span>
-          <h3 class="demo-heading">A single tightly-pinned pipeline.</h3>
+          <h3 class="demo-heading">One repo, one pipeline, one set of versions.</h3>
           <p class="demo-prose">
-            One <code>.gitlab-ci.yml</code> drives the whole service: lint → test
-            → build → deploy. Every image is pinned to an explicit version
+            The monolith repo has a single <code>.gitlab-ci.yml</code>:
+            lint → test → build → deploy-staging → deploy-production. Every job
+            shares one set of pinned base images
             (<code>python:3.11.4-slim</code>, <code>docker:25.0</code>,
             <code>alpine:3.19</code>) and the production deploy is gated behind
-            a manual approval. A cohesive shape — fewer pipelines means fewer
-            drift surfaces.
+            <code>when: manual</code>. The diagram below renders that DAG —
+            severity-coloured cards for any in-pipeline findings, gate flags
+            on each node, click any card for the YAML excerpt and remediation.
           </p>
           <DemoIframe
-            src="/demos/monolith"
+            src="/demos/monolith?embed=1"
             title="Live monolith pipeline scan"
-            caption="Monolith · single pipeline file · consistent pinning"
+            caption="Monolith · single pipeline file · 5 jobs · consistent pinning"
             height={720}
           />
         </article>
 
         <article class="demo-section">
-          <span class="demo-pair-label">microservices · worker</span>
-          <h3 class="demo-heading">One service of three — and it's already drifting.</h3>
+          <span class="demo-pair-label">microservices fleet</span>
+          <h3 class="demo-heading">Three repos, three pipelines, three versions of everything.</h3>
           <p class="demo-prose">
-            The worker service has its own pipeline, sibling to api and web.
-            On its own it looks fine, but the org-level audit dashboard catches
-            what's invisible from any one pipeline: the worker pins
-            <code>python:3.12</code> while api uses <code>python:3.11.4-slim</code>,
-            <code>docker:24.0</code> vs <code>25.0</code>, and
-            <code>alpine:3.18</code> vs <code>3.19</code>. Three SCA-PIN-003
-            cross-pipeline drift findings the monolith above can't have by
-            construction.
+            The microservices repo has separate pipelines for the
+            <code>api</code>, <code>web</code>, and <code>worker</code>
+            services. From inside any one pipeline you can't see drift —
+            you only see your own job graph. The dashboard below is the
+            cross-pipeline view: it scans all three, then surfaces the
+            <strong>image inventory</strong> panel showing 4 distinct images,
+            <strong>3 of them inconsistent</strong> across services
+            (<code>python</code> appears as both <code>3.11.4-slim</code>
+            and <code>3.12</code>; <code>docker</code> as <code>24.0</code>
+            and <code>25.0</code>; <code>alpine</code> as <code>3.18</code>
+            and <code>3.19</code>). Three SCA-PIN-003 cross-pipeline drift
+            findings the monolith above can't have by construction —
+            "different runners boot different runtimes; CVEs patched in
+            one variant may still be live in another."
           </p>
           <DemoIframe
-            src="/demos/microservices-worker"
-            title="Live microservices worker pipeline scan"
-            caption="Microservices · worker service · drifts vs sibling api / web pipelines"
+            src="/demos/org-dashboard"
+            title="Live ciguard org-level audit dashboard demo"
+            caption="Org-level audit · 2 repos · 4 distinct images · 3 inconsistent across services · per-repo grade rollup"
             height={720}
           />
         </article>
       </div>
+    </div>
+  </section>
+
+  <section class="surface">
+    <div class="section-inner">
+      <div class="section-eyebrow">Promotion flow + gates</div>
+      <h2>How a change reaches production.</h2>
+      <p class="muted">
+        Per-pipeline maps show <em>one</em> pipeline's job graph. The
+        topology view zooms out: services × environments, with the gates
+        between every transition. This is the diagram an auditor wants
+        to see when they ask "how does code reach prod here, and what
+        controls fire on the way."
+      </p>
+
+      <article class="demo-section" style="margin-top: 28px;">
+        <span class="demo-pair-label">topology</span>
+        <h3 class="demo-heading">Three services, four environments, one promotion flow.</h3>
+        <p class="demo-prose">
+          The horizontal axis is environments (dev → test → staging → prod);
+          the vertical axis is services (api / web / worker). Each cell that
+          a service deploys to lights up, and the arrows between cells carry
+          the gates that fire on that transition: branch protection, manual
+          approval, required reviewer, wait timers. The
+          <code>worker → prod</code> path is deliberately gateless in the
+          fixture — exactly the pattern an auditor wants flagged in red.
+          Run <code>ciguard topology --verify</code> with a GitHub token and
+          the same view drift-checks the asserted gates against the live
+          branch-protection + deployment-environment state.
+        </p>
+        <DemoIframe
+          src="/demos/topology"
+          title="Live ciguard topology demo (services × environments + promotion gates)"
+          caption="Multi-environment topology · 3 services × 4 envs · promotion gates per transition · drift overlay when run with --verify"
+          height={620}
+        />
+      </article>
     </div>
   </section>
 

@@ -33,6 +33,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
+from ciguard.audit_org.images import extract_repo_images  # noqa: E402
 from ciguard.repo_scan import scan_one, scan_repo  # noqa: E402
 from ciguard.reporter import (  # noqa: E402
     html_interactive,
@@ -156,6 +157,12 @@ def _org_dashboard_demo() -> None:
     monolith_scan = scan_repo(FIXTURES / "monolith", offline=True)
     micro_scan = scan_repo(FIXTURES / "microservices", offline=True)
 
+    # Populate per-repo image inventory so the dashboard's image-inventory
+    # + pin-discipline panels render. Without this, the synthetic report
+    # passes through but the cross-org drift visualisation is suppressed.
+    monolith_images = extract_repo_images(FIXTURES / "monolith")
+    micro_images = extract_repo_images(FIXTURES / "microservices")
+
     repos = [
         RepoScanRecord(
             repo="example-org/monolith",
@@ -163,6 +170,7 @@ def _org_dashboard_demo() -> None:
             description="Single-deployable monolithic application",
             scan=monolith_scan,
             pipeline_file_count=monolith_scan.get("files_scanned", 0),
+            images=monolith_images,
         ),
         RepoScanRecord(
             repo="example-org/microservices",
@@ -170,6 +178,7 @@ def _org_dashboard_demo() -> None:
             description="Multi-service mesh with per-service pipelines",
             scan=micro_scan,
             pipeline_file_count=micro_scan.get("files_scanned", 0),
+            images=micro_images,
         ),
     ]
     report = OrgAuditReport(
