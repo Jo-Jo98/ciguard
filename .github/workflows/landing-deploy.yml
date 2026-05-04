@@ -25,6 +25,11 @@ on:
       - 'src/ciguard/reporter/**'
       - 'src/ciguard/analyzer/**'
       - 'src/ciguard/repo_scan.py'
+      # The pre-commit install tile reads `[project].version` from
+      # pyproject.toml at Astro build time (landing/src/data/version.ts),
+      # so a version bump must republish the landing page even when
+      # nothing under landing/ itself changed.
+      - 'pyproject.toml'
   workflow_dispatch:
 
 permissions:
