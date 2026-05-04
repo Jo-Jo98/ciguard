@@ -2,6 +2,7 @@
 import Base from "../layouts/Base.astro";
 import DemoIframe from "../components/DemoIframe.astro";
 import ScreenshotStrip from "../components/ScreenshotStrip.astro";
+import { CIGUARD_VERSION } from "../data/version";
 ---
 
 <Base
@@ -325,7 +326,7 @@ import ScreenshotStrip from "../components/ScreenshotStrip.astro";
           <p>Drop one hook in <code>.pre-commit-config.yaml</code> to scan changed pipeline files locally.</p>
           <pre><code>repos:
   - repo: https://github.com/Jo-Jo98/ciguard
-    rev: v0.10.0
+    rev: v{CIGUARD_VERSION}
     hooks:
       - id: ciguard-scan</code></pre>
         </div>
