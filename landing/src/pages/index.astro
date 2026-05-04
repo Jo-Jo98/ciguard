@@ -129,34 +129,53 @@ import ScreenshotStrip from "../components/ScreenshotStrip.astro";
   <section class="surface">
     <div class="section-inner">
       <div class="section-eyebrow">Shape comparison</div>
-      <h2>Monolith vs. microservices, side-by-side.</h2>
+      <h2>Monolith vs. microservices.</h2>
       <p class="muted">
-        Two repos, same toolchain, very different posture. The monolith on the
-        left is a single tightly-pinned pipeline; the microservices service
-        on the right shows the pin-discipline drift the org dashboard would
-        flag at scale (different python / docker / alpine versions across
-        sibling services).
+        Two repos, same toolchain, very different posture. Both demos below
+        are live <span class="brand-mark">CI<span class="brand-g">G</span>uard</span> output running in your browser — interact
+        with them the same way an auditor would on their laptop.
       </p>
 
-      <div class="demo-pair">
-        <div>
+      <div class="demo-stack">
+        <article class="demo-section">
           <span class="demo-pair-label">monolith</span>
+          <h3 class="demo-heading">A single tightly-pinned pipeline.</h3>
+          <p class="demo-prose">
+            One <code>.gitlab-ci.yml</code> drives the whole service: lint → test
+            → build → deploy. Every image is pinned to an explicit version
+            (<code>python:3.11.4-slim</code>, <code>docker:25.0</code>,
+            <code>alpine:3.19</code>) and the production deploy is gated behind
+            a manual approval. A cohesive shape — fewer pipelines means fewer
+            drift surfaces.
+          </p>
           <DemoIframe
             src="/demos/monolith"
             title="Live monolith pipeline scan"
             caption="Monolith · single pipeline file · consistent pinning"
-            height={600}
+            height={720}
           />
-        </div>
-        <div>
+        </article>
+
+        <article class="demo-section">
           <span class="demo-pair-label">microservices · worker</span>
+          <h3 class="demo-heading">One service of three — and it's already drifting.</h3>
+          <p class="demo-prose">
+            The worker service has its own pipeline, sibling to api and web.
+            On its own it looks fine, but the org-level audit dashboard catches
+            what's invisible from any one pipeline: the worker pins
+            <code>python:3.12</code> while api uses <code>python:3.11.4-slim</code>,
+            <code>docker:24.0</code> vs <code>25.0</code>, and
+            <code>alpine:3.18</code> vs <code>3.19</code>. Three SCA-PIN-003
+            cross-pipeline drift findings the monolith above can't have by
+            construction.
+          </p>
           <DemoIframe
             src="/demos/microservices-worker"
             title="Live microservices worker pipeline scan"
             caption="Microservices · worker service · drifts vs sibling api / web pipelines"
-            height={600}
+            height={720}
           />
-        </div>
+        </article>
       </div>
     </div>
   </section>
