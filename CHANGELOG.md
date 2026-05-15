@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security disclosures (post-release CVE allocation)
+
+- **Three of the four 2026-04-27 Cycle 1 GHSAs were assigned CVE identifiers on 2026-05-05** by GitHub via MITRE in a sequential block. These reference vulnerabilities that were already fixed in v0.8.2; no new code change. Downstream consumers (Snyk / Tenable / NVD-driven tooling) can now correlate to CVE records:
+  - [GHSA-jrm4-4pcf-4763](https://github.com/Jo-Jo98/ciguard/security/advisories/GHSA-jrm4-4pcf-4763) — Container image runs as root → **[CVE-2026-44218](https://www.cve.org/CVERecord?id=CVE-2026-44218)** (Low)
+  - [GHSA-xw8c-rrvx-f7xq](https://github.com/Jo-Jo98/ciguard/security/advisories/GHSA-xw8c-rrvx-f7xq) — SCA HTTP client reads response body without size cap → **[CVE-2026-44219](https://www.cve.org/CVERecord?id=CVE-2026-44219)** (Low)
+  - [GHSA-8cxw-cc62-q28v](https://github.com/Jo-Jo98/ciguard/security/advisories/GHSA-8cxw-cc62-q28v) — `discover_pipeline_files` follows symlinks out of scan root → **[CVE-2026-44220](https://www.cve.org/CVERecord?id=CVE-2026-44220)** (Low — see `Pentest Reports/2026-05-12-cycle-1.md` § 12 for the v3.1-vs-v4.0 severity drift)
+  - [GHSA-7ww3-xvf5-cxwm](https://github.com/Jo-Jo98/ciguard/security/advisories/GHSA-7ww3-xvf5-cxwm) — Web UI missing HTTP defence-in-depth headers (Medium) — **CVE pending** as of 2026-05-15.
+
 ## [0.11.2] — 2026-05-03
 
 **Highlights:** Cycle 1.5 cleanup release — closes the four follow-up issues filed at v0.11.1 (#20–#23). One small defence-in-depth code change in the App private-key loader, one belt-and-braces strict-OWS check on the webhook signature header, and two documentation patches. No new features. Test count: 977 → 985 (+8).
