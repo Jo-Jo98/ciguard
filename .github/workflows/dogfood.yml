@@ -66,7 +66,7 @@ jobs:
           echo "Combined SARIF result count:"
           jq '.runs[0].results | length' "$combined"
 
-      - uses: github/codeql-action/upload-sarif@b2f9ef845756500b97acbdaf5c1dd4e9c1d15734  # v3.35.2
+      - uses: github/codeql-action/upload-sarif@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a  # v3.35.2
         with:
           sarif_file: sarif/ciguard.sarif
           category: ciguard-self-scan
