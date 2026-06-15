@@ -18,6 +18,6 @@ anthropic>=0.28.0
 # openai>=1.0.0  # uncomment to enable OpenAI support
 
 # Testing
-pytest==9.0.3   # CVE fix: GHSA-6w46-j5rx-g56g
+pytest==9.1.0   # CVE fix: GHSA-6w46-j5rx-g56g
 pytest-cov==7.1.0
 httpx==0.28.1   # async test client for FastAPI
