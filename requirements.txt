@@ -4,14 +4,14 @@ pydantic==2.13.4
 Jinja2==3.1.6
 
 # Web API
-fastapi==0.136.1
-uvicorn[standard]==0.47.0
-python-multipart==0.0.28   # CVE fix: GHSA-wp53-j4wj-2cfg, GHSA-mj87-hwqh-73pj
+fastapi==0.139.0
+uvicorn[standard]==0.50.2
+python-multipart==0.0.32   # CVE fix: GHSA-wp53-j4wj-2cfg, GHSA-mj87-hwqh-73pj
 python-dotenv>=1.2.2        # transitive of uvicorn[standard]; ≥1.2.2 for GHSA-mf9w-mj56-hr94
 
 # PDF export (Slice 5)
 reportlab>=4.2.0
-Pillow>=12.2.0              # transitive of reportlab; ≥12.2.0 for GHSA-cfh3-3jmp-rvhc, GHSA-whj4-6x5x-4v2j
+Pillow>=12.3.0              # transitive of reportlab; ≥12.2.0 for GHSA-cfh3-3jmp-rvhc, GHSA-whj4-6x5x-4v2j
 
 # LLM enrichment (optional — install with: pip install anthropic openai)
 anthropic>=0.28.0
