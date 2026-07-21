@@ -15,7 +15,7 @@
     "build:all": "npm run build:assets && npm run build"
   },
   "dependencies": {
-    "astro": "^6.2.1"
+    "astro": "^7.1.0"
   },
   "devDependencies": {
     "playwright": "^1.59.1"
